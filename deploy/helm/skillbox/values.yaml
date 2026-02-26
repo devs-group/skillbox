@@ -1,0 +1,61 @@
+# -- Replica count
+replicaCount: 2
+
+image:
+  repository: ghcr.io/devs-group/skillbox
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+# -- PostgreSQL connection string (required)
+postgresql:
+  dsn: ""
+
+# -- MinIO / S3 connection (required)
+# endpoint should be host:port without scheme (e.g. minio:9000)
+minio:
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  useSSL: false
+  bucketSkills: "skills"
+  bucketExecutions: "executions"
+
+# -- Redis (optional — system works without it)
+redis:
+  enabled: false
+  url: ""
+
+# -- Skillbox runtime settings
+config:
+  logLevel: "info"
+  defaultTimeout: "120s"
+  maxTimeout: "10m"
+  defaultMemory: "256Mi"
+  defaultCPU: "0.5"
+  imageAllowlist: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
+
+# -- API container resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# -- Docker socket proxy sidecar resources
+dockerProxy:
+  image: tecnativa/docker-socket-proxy:latest
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+
+# -- Service type
+service:
+  type: ClusterIP
+  httpPort: 80
+  grpcPort: 9090

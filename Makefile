@@ -16,7 +16,8 @@ REGISTRY    ?= ghcr.io/devs-group
 IMAGE       := $(REGISTRY)/$(APP_NAME)
 
 .PHONY: all build build-cli run test test-cover lint fmt vet tidy \
-        docker-build docker-push dev dev-down clean help
+        docker-build docker-push dev dev-down clean help \
+        helm-lint helm-template helm-test-kind
 
 ## all: lint, test, and build (default target)
 all: lint test build
@@ -119,6 +120,30 @@ proto:
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		proto/skillbox/v1/skillbox.proto
+
+# ------------------------------------------------------------
+# Helm
+# ------------------------------------------------------------
+
+## helm-lint: Lint the Helm chart
+helm-lint:
+	helm lint deploy/helm/skillbox/ \
+		--set postgresql.dsn="postgres://u:p@pg:5432/db" \
+		--set minio.endpoint="minio:9000" \
+		--set minio.accessKey="admin" \
+		--set minio.secretKey="admin"
+
+## helm-template: Render Helm templates locally
+helm-template:
+	helm template skillbox deploy/helm/skillbox/ \
+		--set postgresql.dsn="postgres://u:p@pg:5432/db" \
+		--set minio.endpoint="minio:9000" \
+		--set minio.accessKey="admin" \
+		--set minio.secretKey="admin"
+
+## helm-test-kind: Run full Helm chart test on a kind cluster
+helm-test-kind:
+	bash scripts/helm-test-kind.sh
 
 # ------------------------------------------------------------
 # Cleanup

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "skillbox.fullname" . }}
+  labels:
+    {{- include "skillbox.labels" . | nindent 4 }}
+data:
+  SKILLBOX_API_PORT: "8080"
+  SKILLBOX_GRPC_PORT: "9090"
+  SKILLBOX_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  SKILLBOX_DEFAULT_TIMEOUT: {{ .Values.config.defaultTimeout | quote }}
+  SKILLBOX_MAX_TIMEOUT: {{ .Values.config.maxTimeout | quote }}
+  SKILLBOX_DEFAULT_MEMORY: {{ .Values.config.defaultMemory | quote }}
+  SKILLBOX_DEFAULT_CPU: {{ .Values.config.defaultCPU | quote }}
+  SKILLBOX_IMAGE_ALLOWLIST: {{ .Values.config.imageAllowlist | quote }}
+  SKILLBOX_S3_BUCKET_SKILLS: {{ .Values.minio.bucketSkills | quote }}
+  SKILLBOX_S3_BUCKET_EXECUTIONS: {{ .Values.minio.bucketExecutions | quote }}
+  SKILLBOX_S3_ENDPOINT: {{ .Values.minio.endpoint | quote }}
+  SKILLBOX_S3_USE_SSL: {{ .Values.minio.useSSL | quote }}

@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "skillbox.fullname" . }}
+  labels:
+    {{- include "skillbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "skillbox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "skillbox.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "skillbox.fullname" . }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        # --- Skillbox API Server ---
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: grpc
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "skillbox.fullname" . }}
+          env:
+            - name: SKILLBOX_DOCKER_HOST
+              value: "tcp://localhost:2375"
+            - name: SKILLBOX_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skillbox.fullname" . }}
+                  key: SKILLBOX_DB_DSN
+            - name: SKILLBOX_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skillbox.fullname" . }}
+                  key: SKILLBOX_S3_ACCESS_KEY
+            - name: SKILLBOX_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skillbox.fullname" . }}
+                  key: SKILLBOX_S3_SECRET_KEY
+            {{- if .Values.redis.enabled }}
+            - name: SKILLBOX_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skillbox.fullname" . }}
+                  key: SKILLBOX_REDIS_URL
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+        # --- Docker Socket Proxy Sidecar ---
+        # Runs as root to access the Docker socket on the host.
+        - name: docker-proxy
+          image: {{ .Values.dockerProxy.image }}
+          ports:
+            - containerPort: 2375
+              name: docker
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+          env:
+            - { name: CONTAINERS,  value: "1" }
+            - { name: IMAGES,      value: "1" }
+            - { name: POST,        value: "1" }
+            - { name: DELETE,      value: "1" }
+            - { name: ALLOW_START, value: "1" }
+            - { name: ALLOW_STOP,  value: "1" }
+            - { name: AUTH,        value: "0" }
+            - { name: SECRETS,     value: "0" }
+            - { name: EXEC,        value: "0" }
+            - { name: BUILD,       value: "0" }
+            - { name: COMMIT,      value: "0" }
+            - { name: NETWORKS,    value: "0" }
+            - { name: VOLUMES,     value: "0" }
+            - { name: SWARM,       value: "0" }
+            - { name: NODES,       value: "0" }
+            - { name: SERVICES,    value: "0" }
+            - { name: TASKS,       value: "0" }
+            - { name: PLUGINS,     value: "0" }
+            - { name: SYSTEM,      value: "0" }
+          resources:
+            {{- toYaml .Values.dockerProxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        - name: tmp
+          emptyDir:
+            sizeLimit: 100Mi
