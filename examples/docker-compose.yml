@@ -148,6 +148,26 @@ services:
       - -c
       - "apk add --no-cache curl zip > /dev/null 2>&1 && sh /run-examples.sh"
 
+  # --- Python SDK E2E Test Runner ---
+  # Runs the Python SDK against the live Skillbox server.
+  python-sdk-test:
+    image: python:3.12-slim
+    depends_on:
+      test-runner:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    environment:
+      SKILLBOX_SERVER_URL: "http://api:8080"
+      SKILLBOX_API_KEY: "sk-example-test-key"
+    volumes:
+      - ../sdks/python/skillbox.py:/sdk/skillbox.py:ro
+      - ./python-sdk-e2e.py:/sdk/python-sdk-e2e.py:ro
+    working_dir: /sdk
+    entrypoint:
+      - python
+      - python-sdk-e2e.py
+
 networks:
   backend:
     driver: bridge
