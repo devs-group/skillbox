@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skillbox-config
+  namespace: sandbox
+data:
+  SKILLBOX_API_PORT: "8080"
+  SKILLBOX_GRPC_PORT: "9090"
+  SKILLBOX_LOG_LEVEL: "info"
+  SKILLBOX_DEFAULT_TIMEOUT: "120s"
+  SKILLBOX_MAX_TIMEOUT: "10m"
+  SKILLBOX_DEFAULT_MEMORY: "256Mi"
+  SKILLBOX_DEFAULT_CPU: "0.5"
+  SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
+  SKILLBOX_S3_BUCKET_SKILLS: "skills"
+  SKILLBOX_S3_BUCKET_EXECUTIONS: "executions"

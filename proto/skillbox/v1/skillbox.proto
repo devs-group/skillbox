@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package skillbox.v1;
+
+option go_package = "github.com/devs-group/skillbox/internal/api/grpc/proto;proto";
+
+import "google/protobuf/struct.proto";
+
+service ExecutionService {
+  rpc RunSkill(RunSkillRequest) returns (RunSkillResponse);
+  rpc GetExecution(GetExecutionRequest) returns (GetExecutionResponse);
+  rpc GetExecutionLogs(GetExecutionLogsRequest) returns (GetExecutionLogsResponse);
+}
+
+service SkillService {
+  rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
+  rpc GetSkill(GetSkillRequest) returns (GetSkillResponse);
+  rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse);
+}
+
+service HealthService {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message RunSkillRequest {
+  string skill = 1;
+  string version = 2;
+  google.protobuf.Struct input = 3;
+  map<string, string> env = 4;
+}
+
+message RunSkillResponse {
+  string execution_id = 1;
+  string status = 2;
+  google.protobuf.Struct output = 3;
+  string files_url = 4;
+  repeated string files_list = 5;
+  string logs = 6;
+  int64 duration_ms = 7;
+  string error = 8;
+}
+
+message GetExecutionRequest {
+  string id = 1;
+}
+
+message GetExecutionResponse {
+  string execution_id = 1;
+  string status = 2;
+  google.protobuf.Struct output = 3;
+  string files_url = 4;
+  repeated string files_list = 5;
+  string logs = 6;
+  int64 duration_ms = 7;
+  string error = 8;
+}
+
+message GetExecutionLogsRequest {
+  string id = 1;
+}
+
+message GetExecutionLogsResponse {
+  string logs = 1;
+}
+
+message ListSkillsRequest {}
+
+message ListSkillsResponse {
+  repeated SkillInfo skills = 1;
+}
+
+message SkillInfo {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+}
+
+message GetSkillRequest {
+  string name = 1;
+  string version = 2;
+}
+
+message GetSkillResponse {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  string lang = 4;
+  string content = 5;
+}
+
+message DeleteSkillRequest {
+  string name = 1;
+  string version = 2;
+}
+
+message DeleteSkillResponse {}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+}

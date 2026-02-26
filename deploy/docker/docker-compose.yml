@@ -1,0 +1,152 @@
+services:
+  # --- Skillbox API Server ---
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "${SKILLBOX_API_PORT:-8080}:8080"
+      - "${SKILLBOX_GRPC_PORT:-9090}:9090"
+    environment:
+      SKILLBOX_DB_DSN: "postgres://skillbox:skillbox@postgres:5432/skillbox?sslmode=disable"
+      SKILLBOX_REDIS_URL: "redis://redis:6379/0"
+      SKILLBOX_S3_ENDPOINT: "minio:9000"
+      SKILLBOX_S3_ACCESS_KEY: "minioadmin"
+      SKILLBOX_S3_SECRET_KEY: "minioadmin"
+      SKILLBOX_S3_USE_SSL: "false"
+      SKILLBOX_DOCKER_HOST: "tcp://docker-proxy:2375"
+      SKILLBOX_LOG_LEVEL: "debug"
+      SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      docker-proxy:
+        condition: service_started
+    networks:
+      - backend
+      - docker
+    restart: unless-stopped
+
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: skillbox
+      POSTGRES_PASSWORD: skillbox
+      POSTGRES_DB: skillbox
+    ports:
+      - "${SKILLBOX_PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillbox -d skillbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # --- Redis ---
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${SKILLBOX_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+
+  # --- MinIO (S3-compatible object storage) ---
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "${SKILLBOX_MINIO_PORT:-9000}:9000"
+      - "${SKILLBOX_MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - miniodata:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
+  # --- MinIO bucket initialization ---
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - backend
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set skillbox http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing skillbox/skills;
+      mc mb --ignore-existing skillbox/executions;
+      echo 'Buckets created successfully';
+      "
+
+  # --- Docker Socket Proxy ---
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+      DELETE: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      AUTH: 0
+      SECRETS: 0
+      EXEC: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      NETWORKS: 0
+      NODES: 0
+      PLUGINS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+
+networks:
+  backend:
+    driver: bridge
+  docker:
+    driver: bridge
+    internal: true
