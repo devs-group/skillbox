@@ -40,10 +40,10 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		v1.GET("/executions/:id/logs", handlers.GetExecutionLogs(s))
 
 		// Skill management endpoints
-		v1.POST("/skills", handlers.UploadSkill(reg, cfg))
-		v1.GET("/skills", handlers.ListSkills(reg))
+		v1.POST("/skills", handlers.UploadSkill(reg, s, cfg))
+		v1.GET("/skills", handlers.ListSkills(s, reg))
 		v1.GET("/skills/:name/:version", handlers.GetSkill(reg))
-		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg))
+		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
 	}
 
 	return engine

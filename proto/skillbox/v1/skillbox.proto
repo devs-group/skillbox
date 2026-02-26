@@ -86,6 +86,9 @@ message GetSkillResponse {
   string description = 3;
   string lang = 4;
   string content = 5;
+  string image = 6;
+  string timeout = 7;
+  string instructions = 8;
 }
 
 message DeleteSkillRequest {

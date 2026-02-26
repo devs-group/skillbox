@@ -126,11 +126,23 @@ func (s *Skill) Validate() error {
 
 // SkillMetadata is the subset of Skill returned in list/get API responses.
 type SkillMetadata struct {
+	Name         string    `json:"name"`
+	Version      string    `json:"version"`
+	Description  string    `json:"description"`
+	Lang         string    `json:"lang"`
+	Image        string    `json:"image,omitempty"`
+	Instructions string    `json:"instructions,omitempty"`
+	Timeout      string    `json:"timeout,omitempty"`
+	Resources    Resources `json:"resources,omitempty"`
+}
+
+// SkillSummary is the compact representation returned by list endpoints.
+// It includes description so agents can decide which skill to use.
+type SkillSummary struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 	Description string `json:"description"`
 	Lang        string `json:"lang"`
-	Image       string `json:"image,omitempty"`
 }
 
 // DefaultImage returns the canonical Docker image for the skill's language.

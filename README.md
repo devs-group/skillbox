@@ -24,6 +24,7 @@ fmt.Println(string(result.Output)) // {"row_count": 5, ...}
 - **File artifacts** — Skills write files → runtime tars them → presigned S3 URL returned
 - **Go SDK** — Single-file, stdlib-only, idiomatic Go client
 - **Python SDK** — Single-file, stdlib-only Python client
+- **LangChain-ready** — Skills map 1:1 to LangChain tools with full introspection via `get_skill`
 - **CLI tool** — Package, push, lint, run, and manage skills from the command line
 - **Self-hosted** — Runs on Docker Compose (dev) or Kubernetes (prod)
 - **Multi-tenant** — API keys scoped to tenants, skills and executions isolated
@@ -194,6 +195,102 @@ if result.has_files:
     client.download_files(result, "./output")
 ```
 
+## LangChain Integration
+
+Skillbox skills map directly to LangChain tools. Each skill becomes a callable tool that an agent can discover, inspect, and execute.
+
+### Skill Discovery + Execution
+
+```python
+from skillbox import Client
+
+client = Client("http://localhost:8080", "sk-your-key")
+
+# List skills WITH descriptions — agent can decide which to use
+for skill in client.list_skills():
+    print(f"{skill.name}: {skill.description}")
+
+# Load full instructions before executing (like Claude Code's Skill tool)
+detail = client.get_skill("data-analysis", "1.0.0")
+print(detail.instructions)  # Full SKILL.md body
+
+# Execute
+result = client.run("data-analysis", input={"data": [1, 2, 3]})
+```
+
+### Custom LangChain Tool
+
+```python
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
+from skillbox import Client, APIError
+
+
+class SkillboxInput(BaseModel):
+    input: dict = Field(default_factory=dict, description="JSON input for the skill")
+
+
+class SkillboxTool(BaseTool):
+    name: str
+    description: str
+    args_schema: type[BaseModel] = SkillboxInput
+    client: Client
+    skill_name: str
+    skill_version: str = ""
+
+    def _run(self, input: dict = {}) -> str:
+        result = self.client.run(
+            self.skill_name,
+            version=self.skill_version,
+            input=input,
+        )
+        if result.error:
+            return f"Error: {result.error}"
+        return json.dumps(result.output, indent=2)
+```
+
+### Build a Toolkit from All Registered Skills
+
+```python
+import json
+from skillbox import Client
+
+
+def build_skillbox_toolkit(base_url: str, api_key: str) -> list[BaseTool]:
+    client = Client(base_url, api_key)
+    tools = []
+
+    for skill in client.list_skills():
+        # Fetch full instructions for the tool description
+        detail = client.get_skill(skill.name, skill.version)
+
+        tools.append(SkillboxTool(
+            name=f"skillbox_{skill.name.replace('-', '_')}",
+            description=f"{skill.description}\n\n{detail.instructions}",
+            client=client,
+            skill_name=skill.name,
+            skill_version=skill.version,
+        ))
+
+    return tools
+```
+
+### Wire into a LangChain Agent
+
+```python
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+
+tools = build_skillbox_toolkit("http://localhost:8080", "sk-your-key")
+agent = create_react_agent(ChatAnthropic(model="claude-sonnet-4-6"), tools)
+
+result = agent.invoke({
+    "messages": [{"role": "user", "content": "Analyze this data: name,age\nAlice,30\nBob,25"}]
+})
+```
+
+The agent sees tools like `skillbox_data_analysis` and `skillbox_text_summary`, reads their descriptions (pulled from SKILL.md instructions), picks the right one, calls it with structured input, and gets structured output back.
+
 ## CLI
 
 ```bash
@@ -319,8 +416,8 @@ Kustomize overlays for dev and prod environments. Includes namespace, RBAC, Netw
 | GET | /v1/executions/:id | Get execution result |
 | GET | /v1/executions/:id/logs | Get execution logs |
 | POST | /v1/skills | Upload a skill zip |
-| GET | /v1/skills | List skills |
-| GET | /v1/skills/:name/:version | Get skill metadata |
+| GET | /v1/skills | List skills (with descriptions) |
+| GET | /v1/skills/:name/:version | Get skill metadata + instructions |
 | DELETE | /v1/skills/:name/:version | Delete a skill |
 | GET | /health | Liveness probe |
 | GET | /ready | Readiness probe |

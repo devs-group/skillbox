@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -143,10 +144,29 @@ func (s *Server) GetExecutionLogs(ctx context.Context, req *pb.GetExecutionLogsR
 // ---------------------------------------------------------------------------
 
 // ListSkills returns metadata for all skills in the registry for the
-// current tenant.
+// current tenant. It reads from the PostgreSQL metadata cache which
+// includes descriptions, falling back to MinIO listing if needed.
 func (s *Server) ListSkills(ctx context.Context, req *pb.ListSkillsRequest) (*pb.ListSkillsResponse, error) {
 	// TenantID would come from gRPC metadata in a full implementation.
 	tenantID := ""
+
+	// Try the database first — it has descriptions.
+	records, err := s.store.ListSkills(ctx, tenantID)
+	if err == nil && len(records) > 0 {
+		resp := &pb.ListSkillsResponse{
+			Skills: make([]*pb.SkillInfo, 0, len(records)),
+		}
+		for _, rec := range records {
+			resp.Skills = append(resp.Skills, &pb.SkillInfo{
+				Name:        rec.Name,
+				Version:     rec.Version,
+				Description: rec.Description,
+			})
+		}
+		return resp, nil
+	}
+
+	// Fall back to registry listing.
 	skills, err := s.registry.List(ctx, tenantID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list skills: %v", err)
@@ -165,7 +185,8 @@ func (s *Server) ListSkills(ctx context.Context, req *pb.ListSkillsRequest) (*pb
 	return resp, nil
 }
 
-// GetSkill retrieves the full metadata for a specific skill version.
+// GetSkill retrieves the full metadata for a specific skill version,
+// including the SKILL.md instructions body.
 func (s *Server) GetSkill(ctx context.Context, req *pb.GetSkillRequest) (*pb.GetSkillResponse, error) {
 	if req.Name == "" || req.Version == "" {
 		return nil, status.Error(codes.InvalidArgument, "skill name and version are required")
@@ -173,15 +194,32 @@ func (s *Server) GetSkill(ctx context.Context, req *pb.GetSkillRequest) (*pb.Get
 
 	// TenantID would come from gRPC metadata in a full implementation.
 	tenantID := ""
-	rc, err := s.registry.Download(ctx, tenantID, req.Name, req.Version)
+
+	loaded, err := registry.LoadSkill(ctx, s.registry, tenantID, req.Name, req.Version)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to retrieve skill: %v", err)
 	}
-	defer rc.Close()
+	defer func() {
+		if loaded.Dir != "" {
+			os.RemoveAll(loaded.Dir)
+		}
+	}()
+
+	sk := loaded.Skill
+	var timeout string
+	if sk.Timeout > 0 {
+		timeout = sk.Timeout.String()
+	}
 
 	return &pb.GetSkillResponse{
-		Name:    req.Name,
-		Version: req.Version,
+		Name:         sk.Name,
+		Version:      sk.Version,
+		Description:  sk.Description,
+		Lang:         sk.Lang,
+		Content:      sk.Instructions,
+		Image:        sk.Image,
+		Timeout:      timeout,
+		Instructions: sk.Instructions,
 	}, nil
 }
 

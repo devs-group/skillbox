@@ -10,11 +10,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/api/middleware"
+	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/skill"
+	"github.com/devs-group/skillbox/internal/store"
 )
 
 // UploadSkill handles POST /v1/skills.
@@ -24,8 +25,10 @@ import (
 //   - multipart/form-data: zip in a "file" form field
 //
 // The zip is validated (must contain SKILL.md with valid frontmatter),
-// then uploaded to the registry. Returns 201 with skill metadata on success.
-func UploadSkill(reg *registry.Registry, cfg *config.Config) gin.HandlerFunc {
+// then uploaded to the registry. Skill metadata is also persisted in
+// PostgreSQL so that list operations can return descriptions without
+// downloading every zip archive. Returns 201 with skill metadata on success.
+func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
@@ -92,16 +95,32 @@ func UploadSkill(reg *registry.Registry, cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		// Upload to registry.
+		// Upload to registry (MinIO/S3).
 		err = reg.Upload(c.Request.Context(), tenantID, parsedSkill.Name, parsedSkill.Version, bytes.NewReader(zipData), int64(len(zipData)))
 		if err != nil {
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to upload skill: "+err.Error())
 			return
 		}
 
-		c.JSON(http.StatusCreated, registry.SkillMeta{
-			Name:    parsedSkill.Name,
-			Version: parsedSkill.Version,
+		// Persist metadata in PostgreSQL for fast listing with descriptions.
+		err = s.UpsertSkill(c.Request.Context(), &store.SkillRecord{
+			TenantID:    tenantID,
+			Name:        parsedSkill.Name,
+			Version:     parsedSkill.Version,
+			Description: parsedSkill.Description,
+			Lang:        parsedSkill.Lang,
+		})
+		if err != nil {
+			// Log but don't fail — the skill is already in the registry.
+			// The list endpoint falls back to registry listing if needed.
+			c.Error(err)
+		}
+
+		c.JSON(http.StatusCreated, skill.SkillSummary{
+			Name:        parsedSkill.Name,
+			Version:     parsedSkill.Version,
+			Description: parsedSkill.Description,
+			Lang:        parsedSkill.Lang,
 		})
 	}
 }
@@ -151,11 +170,29 @@ func validateSkillZip(data []byte) (*skill.Skill, error) {
 }
 
 // ListSkills handles GET /v1/skills.
-// It returns all skill metadata for the authenticated tenant.
-func ListSkills(reg *registry.Registry) gin.HandlerFunc {
+// It returns all skill metadata for the authenticated tenant, including
+// descriptions so agents can decide which skill to use.
+func ListSkills(s *store.Store, reg *registry.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
+		// Try the database first — it has descriptions.
+		records, err := s.ListSkills(c.Request.Context(), tenantID)
+		if err == nil && len(records) > 0 {
+			summaries := make([]skill.SkillSummary, len(records))
+			for i, rec := range records {
+				summaries[i] = skill.SkillSummary{
+					Name:        rec.Name,
+					Version:     rec.Version,
+					Description: rec.Description,
+					Lang:        rec.Lang,
+				}
+			}
+			c.JSON(http.StatusOK, summaries)
+			return
+		}
+
+		// Fall back to registry listing (no descriptions, for backward compat).
 		skills, err := reg.List(c.Request.Context(), tenantID)
 		if err != nil {
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to list skills: "+err.Error())
@@ -173,7 +210,7 @@ func ListSkills(reg *registry.Registry) gin.HandlerFunc {
 
 // GetSkill handles GET /v1/skills/:name/:version.
 // It downloads the skill zip from the registry, parses SKILL.md, and
-// returns the full metadata including the SKILL.md body content.
+// returns the full metadata including the SKILL.md body content (instructions).
 func GetSkill(reg *registry.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
@@ -208,19 +245,28 @@ func GetSkill(reg *registry.Registry) gin.HandlerFunc {
 			return
 		}
 
+		var timeout string
+		if parsed.Timeout > 0 {
+			timeout = parsed.Timeout.String()
+		}
+
 		c.JSON(http.StatusOK, skill.SkillMetadata{
-			Name:        parsed.Name,
-			Version:     parsed.Version,
-			Description: parsed.Description,
-			Lang:        parsed.Lang,
-			Image:       parsed.Image,
+			Name:         parsed.Name,
+			Version:      parsed.Version,
+			Description:  parsed.Description,
+			Lang:         parsed.Lang,
+			Image:        parsed.Image,
+			Instructions: parsed.Instructions,
+			Timeout:      timeout,
+			Resources:    parsed.Resources,
 		})
 	}
 }
 
 // DeleteSkill handles DELETE /v1/skills/:name/:version.
-// It removes the skill from the registry and returns 204 No Content.
-func DeleteSkill(reg *registry.Registry) gin.HandlerFunc {
+// It removes the skill from both the registry and the metadata store,
+// then returns 204 No Content.
+func DeleteSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 		name := c.Param("name")
@@ -239,6 +285,9 @@ func DeleteSkill(reg *registry.Registry) gin.HandlerFunc {
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to delete skill: "+err.Error())
 			return
 		}
+
+		// Best-effort cleanup of the metadata record.
+		_ = s.DeleteSkill(c.Request.Context(), tenantID, name, version)
 
 		c.Status(http.StatusNoContent)
 	}

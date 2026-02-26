@@ -63,11 +63,28 @@ class RunResult:
 
 @dataclass
 class Skill:
-    """A registered skill definition."""
+    """A registered skill definition as returned by list endpoints."""
 
     name: str = ""
     version: str = ""
     description: str = ""
+    lang: str = ""
+
+
+@dataclass
+class SkillDetail:
+    """Full skill metadata returned by get_skill, including the SKILL.md
+    instructions body. This is the key data structure for agents that need
+    to understand what a skill does before executing it."""
+
+    name: str = ""
+    version: str = ""
+    description: str = ""
+    lang: str = ""
+    image: str = ""
+    instructions: str = ""
+    timeout: str = ""
+    resources: dict[str, str] = field(default_factory=dict)
 
 
 class APIError(Exception):
@@ -204,7 +221,11 @@ class Client:
         resp.read()  # drain
 
     def list_skills(self) -> list[Skill]:
-        """Return all skills registered on the server."""
+        """Return all skills registered on the server.
+
+        The response includes descriptions so callers can decide which
+        skill to use.
+        """
         data = self._request("GET", "/v1/skills")
         if not isinstance(data, list):
             return []
@@ -213,9 +234,39 @@ class Client:
                 name=s.get("name", ""),
                 version=s.get("version", ""),
                 description=s.get("description", ""),
+                lang=s.get("lang", ""),
             )
             for s in data
         ]
+
+    def get_skill(self, name: str, version: str = "latest") -> SkillDetail:
+        """Retrieve the full metadata for a specific skill version.
+
+        This includes the SKILL.md instructions body — use it to understand
+        what a skill does, what input it expects, and how it behaves before
+        calling :meth:`run`.
+
+        Args:
+            name: The skill name (e.g. ``"data-analysis"``).
+            version: The skill version (e.g. ``"1.0.0"``). Defaults to
+                ``"latest"``.
+
+        Returns:
+            A :class:`SkillDetail` with the full metadata and instructions.
+        """
+        data = self._request("GET", f"/v1/skills/{name}/{version}")
+        if not isinstance(data, dict):
+            return SkillDetail()
+        return SkillDetail(
+            name=data.get("name", ""),
+            version=data.get("version", ""),
+            description=data.get("description", ""),
+            lang=data.get("lang", ""),
+            image=data.get("image", ""),
+            instructions=data.get("instructions", ""),
+            timeout=data.get("timeout", ""),
+            resources=data.get("resources") or {},
+        )
 
     def health(self) -> None:
         """Check whether the Skillbox server is reachable.

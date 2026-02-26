@@ -73,11 +73,14 @@ type GetSkillRequest struct {
 
 // GetSkillResponse mirrors the GetSkillResponse protobuf message.
 type GetSkillResponse struct {
-	Name        string
-	Version     string
-	Description string
-	Lang        string
-	Content     string
+	Name         string
+	Version      string
+	Description  string
+	Lang         string
+	Content      string
+	Image        string
+	Timeout      string
+	Instructions string
 }
 
 // DeleteSkillRequest mirrors the DeleteSkillRequest protobuf message.

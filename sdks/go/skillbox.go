@@ -104,11 +104,26 @@ func (r *RunResult) HasFiles() bool {
 	return r.FilesURL != ""
 }
 
-// Skill describes a registered skill definition.
+// Skill describes a registered skill definition as returned by list endpoints.
 type Skill struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 	Description string `json:"description"`
+	Lang        string `json:"lang,omitempty"`
+}
+
+// SkillDetail is the full skill definition returned by GetSkill, including
+// the SKILL.md instructions body. This is the key data structure for agents
+// that need to understand what a skill does before executing it.
+type SkillDetail struct {
+	Name         string            `json:"name"`
+	Version      string            `json:"version"`
+	Description  string            `json:"description"`
+	Lang         string            `json:"lang"`
+	Image        string            `json:"image,omitempty"`
+	Instructions string            `json:"instructions,omitempty"`
+	Timeout      string            `json:"timeout,omitempty"`
+	Resources    map[string]string `json:"resources,omitempty"`
 }
 
 // Option configures a [Client]. Pass options to [New].
@@ -308,7 +323,8 @@ func (c *Client) RegisterSkill(ctx context.Context, zipPath string) error {
 	return nil
 }
 
-// ListSkills returns all skills registered on the server.
+// ListSkills returns all skills registered on the server. The response
+// includes descriptions so callers can decide which skill to use.
 func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/skills", nil)
 	if err != nil {
@@ -321,6 +337,23 @@ func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {
 		return nil, err
 	}
 	return skills, nil
+}
+
+// GetSkill retrieves the full metadata for a specific skill version,
+// including the SKILL.md instructions body. Use this to understand what
+// a skill does, what input it expects, and how it behaves before calling Run.
+func (c *Client) GetSkill(ctx context.Context, name, version string) (*SkillDetail, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/skills/"+name+"/"+version, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var detail SkillDetail
+	if err := c.decodeResponse(resp, &detail); err != nil {
+		return nil, err
+	}
+	return &detail, nil
 }
 
 // Health checks whether the Skillbox server is reachable. It returns nil
