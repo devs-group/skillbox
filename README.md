@@ -23,6 +23,7 @@ fmt.Println(string(result.Output)) // {"row_count": 5, ...}
 - **Structured I/O** — Skills read JSON input, write JSON output, and produce file artifacts
 - **File artifacts** — Skills write files → runtime tars them → presigned S3 URL returned
 - **Go SDK** — Single-file, stdlib-only, idiomatic Go client
+- **Python SDK** — Single-file, stdlib-only Python client
 - **CLI tool** — Package, push, lint, run, and manage skills from the command line
 - **Self-hosted** — Runs on Docker Compose (dev) or Kubernetes (prod)
 - **Multi-tenant** — API keys scoped to tenants, skills and executions isolated
@@ -168,6 +169,31 @@ if result.HasFiles() {
 }
 ```
 
+## Python SDK
+
+The SDK is a single file with zero dependencies beyond the Python standard library:
+
+```bash
+# Copy into your project
+curl -O https://raw.githubusercontent.com/devs-group/skillbox/main/sdks/python/skillbox.py
+```
+
+```python
+from skillbox import Client
+
+client = Client("http://localhost:8080", "sk-your-key", tenant_id="my-team")
+
+# Run a skill
+result = client.run("text-summary", input={"text": "Long text here...", "max_sentences": 3})
+
+print(result.status)  # "success"
+print(result.output)  # {"summary": "...", "sentence_count": 2}
+
+# Download file artifacts
+if result.has_files:
+    client.download_files(result, "./output")
+```
+
 ## CLI
 
 ```bash
@@ -228,25 +254,22 @@ if result.HasFiles() {
 }
 ```
 
-### Run with Python
+### Run with the Python SDK
 
 ```python
-import json, os, urllib.request
+from skillbox import Client
 
-url = "http://localhost:8080/v1/executions"
-data = json.dumps({
-    "skill": "data-analysis",
-    "input": {"data": [{"name": "Alice", "age": 30}]}
-}).encode()
+client = Client("http://localhost:8080", os.environ["SKILLBOX_API_KEY"])
 
-req = urllib.request.Request(url, data=data, method="POST")
-req.add_header("Authorization", f"Bearer {os.environ['SKILLBOX_API_KEY']}")
-req.add_header("Content-Type", "application/json")
+result = client.run("data-analysis", input={
+    "data": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
+})
 
-with urllib.request.urlopen(req) as resp:
-    result = json.loads(resp.read())
-    print(result["status"])  # "success"
-    print(result["output"])  # {"row_count": 1, ...}
+print(result.status)   # "success"
+print(result.output)   # {"row_count": 2, "columns": {...}}
+
+if result.has_files:
+    client.download_files(result, "./output")
 ```
 
 ### Run all examples with Docker Compose
