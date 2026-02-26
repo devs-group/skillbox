@@ -30,16 +30,16 @@ type Config struct {
 	ImageAllowlist    []string
 
 	// Execution limits
-	DefaultTimeout    time.Duration
-	MaxTimeout        time.Duration
-	DefaultMemory     int64   // bytes
-	DefaultCPU        float64 // Docker CPU quota (e.g. 0.5 = half a core)
-	MaxOutputSize     int64   // bytes
-	MaxSkillSize      int64   // bytes
+	DefaultTimeout         time.Duration
+	MaxTimeout             time.Duration
+	DefaultMemory          int64   // bytes
+	DefaultCPU             float64 // Docker CPU quota (e.g. 0.5 = half a core)
+	MaxOutputSize          int64   // bytes
+	MaxSkillSize           int64   // bytes
+	MaxConcurrentExecs     int     // max parallel container executions
 
 	// Server
 	APIPort           string
-	GRPCPort          string
 
 	// Observability
 	LogLevel          string
@@ -74,7 +74,6 @@ func Load() (*Config, error) {
 		S3BucketExecs:  envOrDefault("SKILLBOX_S3_BUCKET_EXECUTIONS", "executions"),
 		DockerHost:     envOrDefault("SKILLBOX_DOCKER_HOST", "tcp://localhost:2375"),
 		APIPort:        envOrDefault("SKILLBOX_API_PORT", "8080"),
-		GRPCPort:       envOrDefault("SKILLBOX_GRPC_PORT", "9090"),
 		LogLevel:       envOrDefault("SKILLBOX_LOG_LEVEL", "info"),
 	}
 
@@ -137,6 +136,16 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SKILLBOX_MAX_SKILL_SIZE: %w", err)
 	}
+
+	// Max concurrent executions
+	maxConcurrent, err := strconv.Atoi(envOrDefault("SKILLBOX_MAX_CONCURRENT_EXECS", "10"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_MAX_CONCURRENT_EXECS: %w", err)
+	}
+	if maxConcurrent <= 0 {
+		return nil, fmt.Errorf("SKILLBOX_MAX_CONCURRENT_EXECS must be positive, got %d", maxConcurrent)
+	}
+	cfg.MaxConcurrentExecs = maxConcurrent
 
 	return cfg, nil
 }

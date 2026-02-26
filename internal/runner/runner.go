@@ -60,6 +60,7 @@ type Runner struct {
 	registry  *registry.Registry
 	store     *store.Store
 	artifacts *artifacts.Collector
+	sem       chan struct{} // concurrency limiter
 }
 
 // New creates a Runner with all required dependencies.
@@ -70,6 +71,7 @@ func New(cfg *config.Config, docker *client.Client, reg *registry.Registry, st *
 		registry:  reg,
 		store:     st,
 		artifacts: art,
+		sem:       make(chan struct{}, cfg.MaxConcurrentExecs),
 	}
 }
 
@@ -81,6 +83,14 @@ func New(cfg *config.Config, docker *client.Client, reg *registry.Registry, st *
 // cancelled or times out, the container is killed and the execution is
 // marked as "timeout".
 func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, err error) {
+	// Acquire a concurrency slot (blocks if all slots are in use).
+	select {
+	case r.sem <- struct{}{}:
+		defer func() { <-r.sem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	startTime := time.Now()
 
 	// Resolve "latest" version to the most recently uploaded version.
@@ -203,6 +213,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		"HOME=/tmp",
 	}
 	for k, v := range req.Env {
+		if isBlockedEnvVar(k) {
+			result.setError(fmt.Sprintf("env var %q is not allowed", k))
+			return result, nil
+		}
 		envVars = append(envVars, k+"="+v)
 	}
 
@@ -606,6 +620,28 @@ func stripDockerLogHeaders(data []byte) string {
 	}
 
 	return cleaned.String()
+}
+
+// blockedEnvVars lists environment variable names that callers may not
+// override. These are either security-sensitive (e.g. LD_PRELOAD) or
+// reserved by the sandbox runtime (SANDBOX_*, SKILL_*).
+var blockedEnvVars = map[string]bool{
+	"PATH":            true,
+	"HOME":            true,
+	"LD_PRELOAD":      true,
+	"LD_LIBRARY_PATH": true,
+	"PYTHONPATH":      true,
+	"NODE_PATH":       true,
+	"NODE_OPTIONS":    true,
+}
+
+// isBlockedEnvVar returns true if the given key must not be set by callers.
+func isBlockedEnvVar(key string) bool {
+	if blockedEnvVars[key] {
+		return true
+	}
+	upper := strings.ToUpper(key)
+	return strings.HasPrefix(upper, "SANDBOX_") || strings.HasPrefix(upper, "SKILL_")
 }
 
 // shortID returns the first 12 characters of a container ID for log output.

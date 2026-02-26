@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,7 +12,6 @@ import (
 	"github.com/docker/docker/client"
 
 	"github.com/devs-group/skillbox/internal/api"
-	skillboxgrpc "github.com/devs-group/skillbox/internal/api/grpc"
 	"github.com/devs-group/skillbox/internal/artifacts"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
@@ -98,9 +96,6 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// Create gRPC server
-	grpcSrv := skillboxgrpc.NewServer(r, db, reg)
-
 	// Graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -114,26 +109,8 @@ func main() {
 		}
 	}()
 
-	// Start gRPC server
-	go func() {
-		grpcAddr := ":" + cfg.GRPCPort
-		lis, err := net.Listen("tcp", grpcAddr)
-		if err != nil {
-			slog.Error("failed to listen for grpc", "addr", grpcAddr, "error", err)
-			os.Exit(1)
-		}
-		slog.Info("grpc server listening", "addr", grpcAddr)
-		if err := grpcSrv.Serve(lis); err != nil {
-			slog.Error("grpc server error", "error", err)
-			os.Exit(1)
-		}
-	}()
-
 	<-ctx.Done()
 	slog.Info("shutting down servers...")
-
-	// Stop gRPC server gracefully
-	grpcSrv.Stop()
 
 	// Stop HTTP server gracefully
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

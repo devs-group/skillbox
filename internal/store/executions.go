@@ -69,7 +69,7 @@ func (s *Store) UpdateExecution(ctx context.Context, e *Execution) error {
 		    duration_ms = $7,
 		    error = $8,
 		    finished_at = $9
-		WHERE id = $1
+		WHERE id = $1 AND status = 'running'
 	`, e.ID, e.Status, nullableJSON(e.Output), e.Logs, e.FilesURL,
 		pq.Array(e.FilesList), e.DurationMs, e.Error, e.FinishedAt,
 	)
@@ -82,7 +82,7 @@ func (s *Store) UpdateExecution(ctx context.Context, e *Execution) error {
 		return fmt.Errorf("update execution rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("execution %s not found", e.ID)
+		return fmt.Errorf("execution %s not found or already finished", e.ID)
 	}
 
 	return nil

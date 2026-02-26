@@ -96,9 +96,6 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.APIPort != "8080" {
 		t.Errorf("APIPort = %q, want %q", cfg.APIPort, "8080")
 	}
-	if cfg.GRPCPort != "9090" {
-		t.Errorf("GRPCPort = %q, want %q", cfg.GRPCPort, "9090")
-	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")
 	}
@@ -149,7 +146,6 @@ func TestLoad_CustomValues(t *testing.T) {
 	setRequiredEnv(t)
 
 	t.Setenv("SKILLBOX_API_PORT", "3000")
-	t.Setenv("SKILLBOX_GRPC_PORT", "50051")
 	t.Setenv("SKILLBOX_LOG_LEVEL", "debug")
 	t.Setenv("SKILLBOX_S3_BUCKET_SKILLS", "my-skills")
 	t.Setenv("SKILLBOX_S3_BUCKET_EXECUTIONS", "my-execs")
@@ -171,9 +167,6 @@ func TestLoad_CustomValues(t *testing.T) {
 
 	if cfg.APIPort != "3000" {
 		t.Errorf("APIPort = %q, want %q", cfg.APIPort, "3000")
-	}
-	if cfg.GRPCPort != "50051" {
-		t.Errorf("GRPCPort = %q, want %q", cfg.GRPCPort, "50051")
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "debug")
