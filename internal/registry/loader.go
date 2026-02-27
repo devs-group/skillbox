@@ -84,7 +84,7 @@ func LoadSkill(ctx context.Context, reg *Registry, tenantID, skillName, version 
 	success := false
 	defer func() {
 		if !success {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 		}
 	}()
 
@@ -152,11 +152,11 @@ func extractZipEntry(targetDir string, f *zip.File) error {
 	}
 
 	if f.FileInfo().IsDir() {
-		return os.MkdirAll(destPath, 0o755)
+		return os.MkdirAll(destPath, 0o750)
 	}
 
 	// Ensure the parent directory exists.
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
 		return fmt.Errorf("creating directory for %q: %w", f.Name, err)
 	}
 
@@ -172,7 +172,7 @@ func extractZipEntry(targetDir string, f *zip.File) error {
 	}
 	defer outFile.Close()
 
-	if _, err := io.Copy(outFile, rc); err != nil {
+	if _, err := io.Copy(outFile, io.LimitReader(rc, 512<<20)); err != nil { // 512 MiB per-file limit
 		return fmt.Errorf("writing file: %w", err)
 	}
 

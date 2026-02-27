@@ -479,7 +479,7 @@ func (r *Runner) copyFromContainer(ctx context.Context, containerID, containerPa
 			break
 		}
 		if tarErr != nil {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("reading tar: %w", tarErr)
 		}
 
@@ -493,26 +493,26 @@ func (r *Runner) copyFromContainer(ctx context.Context, containerID, containerPa
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if mkErr := os.MkdirAll(target, 0o755); mkErr != nil {
-				os.RemoveAll(tmpDir)
+			if mkErr := os.MkdirAll(target, 0o750); mkErr != nil {
+				_ = os.RemoveAll(tmpDir)
 				return "", mkErr
 			}
 		case tar.TypeReg:
-			if mkErr := os.MkdirAll(filepath.Dir(target), 0o755); mkErr != nil {
-				os.RemoveAll(tmpDir)
+			if mkErr := os.MkdirAll(filepath.Dir(target), 0o750); mkErr != nil {
+				_ = os.RemoveAll(tmpDir)
 				return "", mkErr
 			}
 			f, createErr := os.Create(target)
 			if createErr != nil {
-				os.RemoveAll(tmpDir)
+				_ = os.RemoveAll(tmpDir)
 				return "", createErr
 			}
-			if _, cpErr := io.Copy(f, tr); cpErr != nil {
-				f.Close()
-				os.RemoveAll(tmpDir)
+			if _, cpErr := io.Copy(f, io.LimitReader(tr, 512<<20)); cpErr != nil { // 512 MiB per-file limit
+				_ = f.Close()
+				_ = os.RemoveAll(tmpDir)
 				return "", cpErr
 			}
-			f.Close()
+			_ = f.Close()
 		}
 	}
 

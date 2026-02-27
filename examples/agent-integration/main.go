@@ -66,7 +66,7 @@ func main() {
 	// Pretty-print the output
 	if result.Output != nil {
 		var output map[string]interface{}
-		json.Unmarshal(result.Output, &output)
+		_ = json.Unmarshal(result.Output, &output)
 		pretty, _ := json.MarshalIndent(output, "", "  ")
 		fmt.Printf("Output:\n%s\n", pretty)
 	}

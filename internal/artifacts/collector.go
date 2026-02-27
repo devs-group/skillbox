@@ -173,10 +173,10 @@ func createTarGz(baseDir string, files []string) (*bytes.Buffer, error) {
 			return nil, fmt.Errorf("opening %q: %w", absPath, err)
 		}
 		if _, err := io.Copy(tw, f); err != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, fmt.Errorf("writing %q to tar: %w", rel, err)
 		}
-		f.Close()
+		_ = f.Close()
 	}
 
 	if err := tw.Close(); err != nil {

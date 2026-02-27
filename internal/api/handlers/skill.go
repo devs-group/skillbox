@@ -149,7 +149,7 @@ func validateSkillZip(data []byte) (*skill.Skill, error) {
 				return nil, errors.New("failed to open SKILL.md in zip: " + err.Error())
 			}
 			skillMDData, err = io.ReadAll(rc)
-			rc.Close()
+			_ = rc.Close()
 			if err != nil {
 				return nil, errors.New("failed to read SKILL.md from zip: " + err.Error())
 			}

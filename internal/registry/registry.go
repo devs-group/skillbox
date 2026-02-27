@@ -118,7 +118,7 @@ func (r *Registry) Download(ctx context.Context, tenantID, skillName, version st
 
 	// Verify the object is actually accessible by reading its stat.
 	if _, err := obj.Stat(); err != nil {
-		obj.Close()
+		_ = obj.Close()
 		// MinIO returns an ErrorResponse with Code "NoSuchKey" for missing objects.
 		// Map this to our sentinel so callers can distinguish "not found" from other errors.
 		errResp := minio.ErrorResponse{}

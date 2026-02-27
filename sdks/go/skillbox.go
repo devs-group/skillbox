@@ -497,7 +497,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 		}
 
 		// Resolve the target path and ensure it stays inside destDir.
-		target := filepath.Join(absDestDir, header.Name)
+		target := filepath.Join(absDestDir, header.Name) // #nosec G305 -- path traversal is checked below
 		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), absDestDir+string(os.PathSeparator)) &&
 			filepath.Clean(target) != absDestDir {
 			return fmt.Errorf("skillbox: path traversal detected in tar entry: %s", header.Name)
@@ -505,12 +505,12 @@ func extractTarGz(r io.Reader, destDir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(target, 0o750); err != nil {
 				return fmt.Errorf("skillbox: create directory %s: %w", target, err)
 			}
 
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return fmt.Errorf("skillbox: create parent directory for %s: %w", target, err)
 			}
 			if err := writeFile(target, tr, header.FileInfo().Mode()); err != nil {
@@ -524,7 +524,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 // writeFile creates a file at path with the given mode and copies content
 // from r into it.
 func writeFile(path string, r io.Reader, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 -- path is validated by caller
 	if err != nil {
 		return fmt.Errorf("skillbox: create file %s: %w", path, err)
 	}
