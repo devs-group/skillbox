@@ -106,7 +106,7 @@ func TestRun_Success(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(want)
+		_ = json.NewEncoder(w).Encode(want)
 	}))
 	defer srv.Close()
 
@@ -127,8 +127,8 @@ func TestRun_Success(t *testing.T) {
 	}
 	// Compare JSON semantically — encoding may compact whitespace.
 	var gotOutput, wantOutput interface{}
-	json.Unmarshal(result.Output, &gotOutput)
-	json.Unmarshal(want.Output, &wantOutput)
+	_ = json.Unmarshal(result.Output, &gotOutput)
+	_ = json.Unmarshal(want.Output, &wantOutput)
 	gotBytes, _ := json.Marshal(gotOutput)
 	wantBytes, _ := json.Marshal(wantOutput)
 	if string(gotBytes) != string(wantBytes) {
@@ -149,7 +149,7 @@ func TestRun_Success(t *testing.T) {
 func TestRun_FailedExecution(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(RunResult{
+		_ = json.NewEncoder(w).Encode(RunResult{
 			ExecutionID: "exec-fail-456",
 			Status:      "failed",
 			Error:       "skill exited with code 1",
@@ -224,7 +224,7 @@ func TestListSkills(t *testing.T) {
 			t.Errorf("expected path /v1/skills, got %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(want)
+		_ = json.NewEncoder(w).Encode(want)
 	}))
 	defer srv.Close()
 
@@ -318,7 +318,7 @@ func TestGetExecution(t *testing.T) {
 			t.Errorf("expected path /v1/executions/exec-get-789, got %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(want)
+		_ = json.NewEncoder(w).Encode(want)
 	}))
 	defer srv.Close()
 
@@ -348,7 +348,7 @@ func TestGetExecutionLogs(t *testing.T) {
 				t.Errorf("unexpected path: %s", r.URL.Path)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"logs": wantLogs})
+			_ = json.NewEncoder(w).Encode(map[string]string{"logs": wantLogs})
 		}))
 		defer srv.Close()
 
@@ -402,7 +402,7 @@ func TestDownloadFiles(t *testing.T) {
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/gzip")
-			w.Write(archive)
+			_, _ = w.Write(archive)
 		}))
 		defer srv.Close()
 
@@ -428,7 +428,7 @@ func TestDownloadFiles(t *testing.T) {
 		})
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write(archive)
+			_, _ = w.Write(archive)
 		}))
 		defer srv.Close()
 

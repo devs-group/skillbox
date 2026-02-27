@@ -108,7 +108,7 @@ func (s *Store) migrate() error {
 		}
 
 		if _, err := tx.Exec(string(data)); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("execute migration %s: %w", entry.Name(), err)
 		}
 
@@ -116,7 +116,7 @@ func (s *Store) migrate() error {
 			"INSERT INTO sandbox_migrations (filename) VALUES ($1)",
 			entry.Name(),
 		); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
 		}
 

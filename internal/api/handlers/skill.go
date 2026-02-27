@@ -113,7 +113,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin
 		if err != nil {
 			// Log but don't fail — the skill is already in the registry.
 			// The list endpoint falls back to registry listing if needed.
-			c.Error(err)
+			_ = c.Error(err)
 		}
 
 		c.JSON(http.StatusCreated, skill.SkillSummary{
