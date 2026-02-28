@@ -209,7 +209,7 @@ func TestDefaultImage(t *testing.T) {
 	}{
 		{lang: "python", image: "", wantImage: "python:3.12-slim"},
 		{lang: "node", image: "", wantImage: "node:20-slim"},
-		{lang: "bash", image: "", wantImage: "alpine:3"},
+		{lang: "bash", image: "", wantImage: "bash:5"},
 		{lang: "python", image: "python:3.11-slim", wantImage: "python:3.11-slim"},
 		{lang: "node", image: "custom-node:latest", wantImage: "custom-node:latest"},
 	}

@@ -131,7 +131,7 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 
 	// Default image allowlist.
-	expectedImages := []string{"python:3.12-slim", "python:3.11-slim", "node:20-slim", "node:18-slim", "alpine:3"}
+	expectedImages := []string{"python:3.12-slim", "python:3.11-slim", "node:20-slim", "node:18-slim", "bash:5"}
 	if len(cfg.ImageAllowlist) != len(expectedImages) {
 		t.Fatalf("ImageAllowlist length = %d, want %d", len(cfg.ImageAllowlist), len(expectedImages))
 	}

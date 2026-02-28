@@ -543,8 +543,11 @@ func buildCommand(loaded *registry.LoadedSkill) []string {
 	case "node", "nodejs", "javascript":
 		return []string{"node", entrypoint}
 
-	case "bash", "shell", "sh":
+	case "bash":
 		return []string{"bash", entrypoint}
+
+	case "shell", "sh":
+		return []string{"sh", entrypoint}
 
 	default:
 		// Fallback: try to run directly.

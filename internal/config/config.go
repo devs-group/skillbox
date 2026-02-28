@@ -89,7 +89,7 @@ func Load() (*Config, error) {
 	cfg.S3UseSSL = useSSL
 
 	// Image allowlist
-	raw := envOrDefault("SKILLBOX_IMAGE_ALLOWLIST", "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,alpine:3")
+	raw := envOrDefault("SKILLBOX_IMAGE_ALLOWLIST", "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5")
 	for _, img := range strings.Split(raw, ",") {
 		img = strings.TrimSpace(img)
 		if img != "" {

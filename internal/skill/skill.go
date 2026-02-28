@@ -157,7 +157,7 @@ func (s *Skill) DefaultImage() string {
 	case LangNode:
 		return "node:20-slim"
 	case LangBash:
-		return "alpine:3"
+		return "bash:5"
 	default:
 		return ""
 	}
