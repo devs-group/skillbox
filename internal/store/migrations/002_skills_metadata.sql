@@ -1,3 +1,4 @@
+-- +goose Up
 -- Migration: Add skills metadata table for fast listing with descriptions.
 -- Previously, ListSkills iterated MinIO objects which only gave name/version.
 -- This table caches skill metadata on upload so listings include description.
@@ -14,3 +15,6 @@ CREATE TABLE sandbox.skills (
 
 CREATE INDEX idx_skills_tenant ON sandbox.skills(tenant_id);
 CREATE INDEX idx_skills_name ON sandbox.skills(tenant_id, name);
+
+-- +goose Down
+DROP TABLE IF EXISTS sandbox.skills;

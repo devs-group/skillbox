@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE SCHEMA IF NOT EXISTS sandbox;
 
 CREATE TABLE sandbox.api_keys (
@@ -29,3 +30,8 @@ CREATE TABLE sandbox.executions (
 );
 CREATE INDEX idx_executions_tenant ON sandbox.executions(tenant_id);
 CREATE INDEX idx_executions_status ON sandbox.executions(status);
+
+-- +goose Down
+DROP TABLE IF EXISTS sandbox.executions;
+DROP TABLE IF EXISTS sandbox.api_keys;
+DROP SCHEMA IF EXISTS sandbox;

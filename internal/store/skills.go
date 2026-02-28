@@ -85,6 +85,26 @@ func (s *Store) GetSkill(ctx context.Context, tenantID, name, version string) (*
 	return rec, nil
 }
 
+// ResolveLatestVersion returns the version string of the most recently
+// uploaded skill for a given tenant and name. If no versions exist, it
+// returns ErrNotFound.
+func (s *Store) ResolveLatestVersion(ctx context.Context, tenantID, name string) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT version FROM sandbox.skills
+		WHERE tenant_id = $1 AND name = $2
+		ORDER BY uploaded_at DESC
+		LIMIT 1
+	`, tenantID, name).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve latest version: %w", err)
+	}
+	return version, nil
+}
+
 // DeleteSkill removes a skill metadata record.
 func (s *Store) DeleteSkill(ctx context.Context, tenantID, name, version string) error {
 	_, err := s.db.ExecContext(ctx, `

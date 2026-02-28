@@ -211,7 +211,9 @@ func ListSkills(s *store.Store, reg *registry.Registry) gin.HandlerFunc {
 // GetSkill handles GET /v1/skills/:name/:version.
 // It downloads the skill zip from the registry, parses SKILL.md, and
 // returns the full metadata including the SKILL.md body content (instructions).
-func GetSkill(reg *registry.Registry) gin.HandlerFunc {
+// When version is "latest", it resolves to the most recently uploaded version
+// via the database before downloading from the registry.
+func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 		name := c.Param("name")
@@ -220,6 +222,20 @@ func GetSkill(reg *registry.Registry) gin.HandlerFunc {
 		if name == "" || version == "" {
 			response.RespondError(c, http.StatusBadRequest, "bad_request", "skill name and version are required")
 			return
+		}
+
+		// Resolve "latest" to the most recently uploaded version.
+		if version == "latest" {
+			resolved, err := s.ResolveLatestVersion(c.Request.Context(), tenantID, name)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@latest")
+					return
+				}
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to resolve latest version: "+err.Error())
+				return
+			}
+			version = resolved
 		}
 
 		rc, err := reg.Download(c.Request.Context(), tenantID, name, version)

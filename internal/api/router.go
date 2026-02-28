@@ -42,7 +42,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		// Skill management endpoints
 		v1.POST("/skills", handlers.UploadSkill(reg, s, cfg))
 		v1.GET("/skills", handlers.ListSkills(s, reg))
-		v1.GET("/skills/:name/:version", handlers.GetSkill(reg))
+		v1.GET("/skills/:name/:version", handlers.GetSkill(reg, s))
 		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
 	}
 
