@@ -30,3 +30,4 @@ dist/
 # Temporary
 tmp/
 *.zip
+__pycache__/
