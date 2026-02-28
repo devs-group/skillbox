@@ -6,9 +6,9 @@ import (
 )
 
 func TestValidateImage_Allowed(t *testing.T) {
-	allowlist := []string{"python:3.12-slim", "node:20-slim", "bash:5"}
+	allowlist := []string{"python:3.12-slim", "node:20-slim", "alpine:3"}
 
-	tests := []string{"python:3.12-slim", "node:20-slim", "bash:5"}
+	tests := []string{"python:3.12-slim", "node:20-slim", "alpine:3"}
 	for _, img := range tests {
 		t.Run(img, func(t *testing.T) {
 			if err := ValidateImage(img, allowlist); err != nil {

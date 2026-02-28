@@ -240,7 +240,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		},
 	}
 	hostCfg := &container.HostConfig{
-		NetworkMode: "none",
+		NetworkMode: "bridge",
 		CapDrop:     []string{"ALL"},
 		SecurityOpt: []string{"no-new-privileges:true"},
 		Resources: container.Resources{
