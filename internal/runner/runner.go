@@ -251,7 +251,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 			PidsLimit:  &pidsLimit,
 		},
 		Tmpfs: map[string]string{
-			"/tmp": "rw,nosuid,size=256m",
+			"/tmp": "rw,exec,nosuid,size=256m",
 		},
 		AutoRemove: false,
 	}
