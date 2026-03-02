@@ -166,7 +166,15 @@ func extractZipEntry(targetDir string, f *zip.File) error {
 	}
 	defer rc.Close()
 
-	outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
+	// Normalize file permissions. Many zip tools (notably Python's
+	// zipfile.writestr) create entries with external_attr=0 which results
+	// in mode 0 after extraction, making files unreadable/unexecutable.
+	mode := f.Mode()
+	if mode == 0 {
+		mode = 0o644
+	}
+
+	outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
