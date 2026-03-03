@@ -323,10 +323,30 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		return result, nil
 	}
 
-	// Step 10: Run the skill command via ExecD.
+	// Step 10: If the skill has no entrypoint, generate one that executes the
+	// LLM's input as Python code. This makes library-style skills (core/*.py
+	// with SKILL.md instructions) work the same way as in Claude's web UI —
+	// the LLM writes code using the skill's utilities, and the runner
+	// executes it.
 	if loadedSkill.Entrypoint == "" {
-		result.setError("skill has no entrypoint (main.py, run.py, main.js, or main.sh) — it is an instruction-only skill and cannot be executed in a sandbox")
-		return result, nil
+		generatedEntry := generateCodeRunnerEntrypoint()
+		uploadFiles = append(uploadFiles, sandbox.FileUpload{
+			Path:    "/sandbox/scripts/main.py",
+			Content: generatedEntry,
+			Mode:    0o755,
+		})
+		if reuploadErr := r.sandbox.UploadFiles(execCtx, execdURL, []sandbox.FileUpload{{
+			Path:    "/sandbox/scripts/main.py",
+			Content: generatedEntry,
+			Mode:    0o755,
+		}}); reuploadErr != nil {
+			result.setError(fmt.Sprintf("uploading generated entrypoint: %v", reuploadErr))
+			return result, nil
+		}
+		loadedSkill.Entrypoint = "main.py"
+		if loadedSkill.Skill.Lang == "" {
+			loadedSkill.Skill.Lang = "python"
+		}
 	}
 	cmd := buildShellCommand(loadedSkill)
 	timeoutMs := int(timeout.Milliseconds())
@@ -644,6 +664,69 @@ func buildShellCommand(loaded *registry.LoadedSkill) string {
 	default:
 		return entrypoint
 	}
+}
+
+// generateCodeRunnerEntrypoint returns a Python script that reads the LLM's
+// input from SANDBOX_INPUT, extracts any Python code block, and executes it.
+// This enables library-style skills (SKILL.md + core/*.py utilities, no
+// main.py) to work the same way as in Claude's web UI.
+func generateCodeRunnerEntrypoint() []byte {
+	// Built as concatenated strings because the Python code uses backtick
+	// characters (via chr(96)) for matching markdown code fences, and Go
+	// raw string literals cannot contain backticks.
+	script := "#!/usr/bin/env python3\n" +
+		"\"\"\"Auto-generated entrypoint for library-style skill.\"\"\"\n" +
+		"import json, os, re, sys, traceback\n" +
+		"\n" +
+		"sys.path.insert(0, \"/sandbox/scripts\")\n" +
+		"\n" +
+		"OUTPUT_DIR = os.environ.get(\"SANDBOX_FILES_DIR\", \"/sandbox/out/files\")\n" +
+		"os.makedirs(OUTPUT_DIR, exist_ok=True)\n" +
+		"\n" +
+		"raw = os.environ.get(\"SANDBOX_INPUT\", \"{}\")\n" +
+		"try:\n" +
+		"    data = json.loads(raw)\n" +
+		"    text = data.get(\"input\", \"\") if isinstance(data, dict) else str(data)\n" +
+		"except Exception:\n" +
+		"    text = raw\n" +
+		"\n" +
+		"bt = chr(96)\n" +
+		"fence3 = bt * 3\n" +
+		"code = None\n" +
+		"for pat in [fence3 + r\"python\\s*\\n(.*?)\" + fence3, fence3 + r\"\\s*\\n(.*?)\" + fence3]:\n" +
+		"    m = re.findall(pat, text, re.DOTALL)\n" +
+		"    if m:\n" +
+		"        code = m[-1].strip()\n" +
+		"        break\n" +
+		"\n" +
+		"if code is None and any(kw in text for kw in [\"import \", \"from \", \"def \", \"class \", \"print(\"]):\n" +
+		"    code = text.strip()\n" +
+		"\n" +
+		"if not code:\n" +
+		"    print(json.dumps({\"status\": \"error\", \"error\": \"No Python code found in input. Send a code block using the skill utilities.\"}))\n" +
+		"    sys.exit(0)\n" +
+		"\n" +
+		"# Redirect bare filenames to the output directory.\n" +
+		"for ext in [\".gif\", \".png\", \".jpg\", \".csv\", \".xlsx\", \".pdf\"]:\n" +
+		"    code = re.sub(\n" +
+		"        r\"(['\"])([^'\\\"\" + r\"\\/]+\" + re.escape(ext) + r\")(['\"])\",\n" +
+		"        lambda m: m.group(1) + OUTPUT_DIR + \"/\" + m.group(2) + m.group(3),\n" +
+		"        code,\n" +
+		"    )\n" +
+		"\n" +
+		"try:\n" +
+		"    exec(code, {\"__name__\": \"__main__\"})\n" +
+		"except Exception:\n" +
+		"    traceback.print_exc()\n" +
+		"    print(json.dumps({\"status\": \"error\", \"error\": traceback.format_exc()}))\n" +
+		"    sys.exit(0)\n" +
+		"\n" +
+		"files = [f for f in os.listdir(OUTPUT_DIR) if not f.startswith(\".\")]\n" +
+		"if files:\n" +
+		"    print(json.dumps({\"status\": \"success\", \"files\": files}))\n" +
+		"else:\n" +
+		"    print(json.dumps({\"status\": \"success\", \"message\": \"Code executed (no output files produced).\"}))\n"
+	return []byte(script)
 }
 
 // blockedEnvVars lists environment variable names that callers may not
