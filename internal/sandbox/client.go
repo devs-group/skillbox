@@ -213,7 +213,7 @@ func (c *Client) Ping(ctx context.Context, execdURL string) error {
 	if err != nil {
 		return fmt.Errorf("opensandbox: ping: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return c.errStatus("ping", resp)
 	}
@@ -253,7 +253,7 @@ func (c *Client) UploadFiles(ctx context.Context, execdURL string, files []FileU
 	if err != nil {
 		return fmt.Errorf("opensandbox: upload files: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		return c.errStatus("upload files", resp)
 	}
@@ -273,7 +273,7 @@ func (c *Client) RunCommand(ctx context.Context, execdURL, cmd, cwd string, time
 	if err != nil {
 		return nil, fmt.Errorf("opensandbox: run command: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.errStatus("run command", resp)
 	}
@@ -319,7 +319,7 @@ func (c *Client) SearchFiles(ctx context.Context, execdURL, dir, pattern string)
 	}
 	out := make([]FileInfo, len(raw))
 	for i, rf := range raw {
-		out[i] = FileInfo{Path: rf.Path, Size: rf.Size, ModifiedAt: rf.ModifiedAt}
+		out[i] = FileInfo(rf)
 	}
 	return out, nil
 }

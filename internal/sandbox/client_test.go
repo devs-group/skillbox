@@ -67,7 +67,7 @@ func TestCreateSandbox_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusAccepted)
-		fmt.Fprint(w, sandboxJSON("sb-123", "Pending"))
+		fmt.Fprint(w, sandboxJSON("sb-123", "Pending")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -95,7 +95,7 @@ func TestCreateSandbox_ServerError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "internal failure")
+		fmt.Fprint(w, "internal failure") //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -123,7 +123,7 @@ func TestGetSandbox_Success(t *testing.T) {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("sb-456", "Running"))
+		fmt.Fprint(w, sandboxJSON("sb-456", "Running")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -207,7 +207,7 @@ func TestListSandboxes_MetadataParams(t *testing.T) {
 			t.Error("missing metadata param team=backend")
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "[%s,%s]", sandboxJSON("sb-1", "Running"), sandboxJSON("sb-2", "Pending"))
+		fmt.Fprintf(w, "[%s,%s]", sandboxJSON("sb-1", "Running"), sandboxJSON("sb-2", "Pending")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -298,7 +298,7 @@ func TestGetEndpoint_Success(t *testing.T) {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(endpointWire{
+		json.NewEncoder(w).Encode(endpointWire{ //nolint:errcheck
 			Host:    "sandbox-host.example.com",
 			Port:    8080,
 			URL:     "http://sandbox-host.example.com:8080",
@@ -334,7 +334,7 @@ func TestDiscoverExecD_Success(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-exec/endpoints/44772", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(endpointWire{
+		json.NewEncoder(w).Encode(endpointWire{ //nolint:errcheck
 			Host:    "exec-host",
 			Port:    ExecDPort,
 			URL:     "http://exec-host:44772",
@@ -817,7 +817,7 @@ func TestDownloadFile_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
@@ -864,7 +864,7 @@ func TestSearchFiles_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode([]fileInfoWire{
+		json.NewEncoder(w).Encode([]fileInfoWire{ //nolint:errcheck
 			{Path: "/app/main.py", Size: 256, ModifiedAt: now},
 			{Path: "/app/util.py", Size: 128, ModifiedAt: now},
 		})

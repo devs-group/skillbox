@@ -434,7 +434,7 @@ func TestUpload_MissingFileName(t *testing.T) {
 	if _, err = part.Write([]byte("data")); err != nil {
 		t.Fatalf("failed to write part content: %v", err)
 	}
-	mw.Close()
+	mw.Close() //nolint:errcheck
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

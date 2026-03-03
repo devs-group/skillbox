@@ -61,7 +61,7 @@ func LoadSkill(ctx context.Context, reg *Registry, tenantID, skillName, version 
 	if err != nil {
 		return nil, fmt.Errorf("downloading skill %s/%s@%s: %w", tenantID, skillName, version, err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck
 
 	// Read the entire zip into memory so we can use zip.NewReader.
 	zipBytes, err := io.ReadAll(rc)
@@ -169,7 +169,7 @@ func extractZipEntry(targetDir string, f *zip.File) error {
 	if err != nil {
 		return fmt.Errorf("opening zip entry: %w", err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck
 
 	// Normalize file permissions. Many zip tools (notably Python's
 	// zipfile.writestr) create entries with external_attr=0 which results
@@ -183,7 +183,7 @@ func extractZipEntry(targetDir string, f *zip.File) error {
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer outFile.Close()
+	defer outFile.Close() //nolint:errcheck
 
 	if _, err := io.Copy(outFile, io.LimitReader(rc, 512<<20)); err != nil { // 512 MiB per-file limit
 		return fmt.Errorf("writing file: %w", err)

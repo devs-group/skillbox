@@ -144,7 +144,7 @@ func (s *Store) ListExecutions(ctx context.Context, tenantID string, limit, offs
 	if err != nil {
 		return nil, fmt.Errorf("list executions: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var execs []Execution
 	for rows.Next() {

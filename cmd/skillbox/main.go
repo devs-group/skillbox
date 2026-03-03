@@ -84,10 +84,10 @@ func packageDir(dir string) (zipPath string, sk *skill.Skill, err error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("create zip file: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	zw := zip.NewWriter(f)
-	defer zw.Close()
+	defer zw.Close() //nolint:errcheck
 
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -120,7 +120,7 @@ func packageDir(dir string) (zipPath string, sk *skill.Skill, err error) {
 		if err != nil {
 			return err
 		}
-		defer r.Close()
+		defer r.Close() //nolint:errcheck
 		_, err = io.Copy(w, r)
 		return err
 	})
@@ -363,9 +363,9 @@ func newSkillListCmd() *cobra.Command {
 
 			// Default to table output.
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION")
+			fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION") //nolint:errcheck
 			for _, s := range skills {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Version, s.Description)
+				fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Version, s.Description) //nolint:errcheck
 			}
 			return w.Flush()
 		},

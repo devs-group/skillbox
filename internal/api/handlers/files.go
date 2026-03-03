@@ -40,7 +40,7 @@ func (h *FilesHandler) Upload(c *gin.Context) {
 		response.RespondError(c, http.StatusBadRequest, "bad_request", "missing 'file' field in multipart form")
 		return
 	}
-	defer upload.Close()
+	defer upload.Close() //nolint:errcheck
 
 	name := c.PostForm("name")
 	if name == "" {
@@ -164,7 +164,7 @@ func (h *FilesHandler) Download(c *gin.Context) {
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to download file from storage")
 		return
 	}
-	defer reader.Close()
+	defer reader.Close() //nolint:errcheck
 
 	if contentType == "" {
 		contentType = file.ContentType
@@ -202,7 +202,7 @@ func (h *FilesHandler) Update(c *gin.Context) {
 		response.RespondError(c, http.StatusBadRequest, "bad_request", "missing 'file' field in multipart form")
 		return
 	}
-	defer upload.Close()
+	defer upload.Close() //nolint:errcheck
 
 	newVersion := existing.Version + 1
 	newS3Key := fmt.Sprintf("%s/%s/v%d/%s", existing.TenantID, existing.ExecutionID, newVersion, existing.Name)

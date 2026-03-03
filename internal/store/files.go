@@ -109,7 +109,7 @@ func (s *Store) ListFiles(ctx context.Context, filter FileFilter) ([]*File, erro
 	if err != nil {
 		return nil, fmt.Errorf("list files: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var files []*File
 	for rows.Next() {
@@ -204,7 +204,7 @@ func (s *Store) ListFileVersions(ctx context.Context, fileID, tenantID string) (
 	if err != nil {
 		return nil, fmt.Errorf("list file versions: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var files []*File
 	for rows.Next() {

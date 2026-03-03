@@ -603,7 +603,7 @@ func TestRegisterSkill(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get form file: %v", err)
 		}
-		defer file.Close()
+		defer file.Close() //nolint:errcheck
 
 		if header.Filename != "test-skill.zip" {
 			t.Errorf("expected filename test-skill.zip, got %q", header.Filename)
@@ -922,7 +922,7 @@ func TestUpdateFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get form file: %v", err)
 		}
-		defer file.Close()
+		defer file.Close() //nolint:errcheck
 
 		if header.Filename != "update-content.bin" {
 			t.Errorf("expected filename update-content.bin, got %q", header.Filename)
@@ -1122,7 +1122,7 @@ func TestClient_UploadFileFromReader(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get form file: %v", err)
 		}
-		defer file.Close()
+		defer file.Close() //nolint:errcheck
 
 		if header.Filename != "test.xlsx" {
 			t.Errorf("expected filename test.xlsx, got %q", header.Filename)

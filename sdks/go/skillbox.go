@@ -306,7 +306,7 @@ func (c *Client) RegisterSkill(ctx context.Context, zipPath string) error {
 	if err != nil {
 		return fmt.Errorf("skillbox: open skill archive: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
@@ -315,7 +315,7 @@ func (c *Client) RegisterSkill(ctx context.Context, zipPath string) error {
 	// the request without buffering the entire file in memory.
 	errCh := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck
 		part, err := writer.CreateFormFile("file", filepath.Base(zipPath))
 		if err != nil {
 			errCh <- err
@@ -536,7 +536,7 @@ func (c *Client) DownloadFile(ctx context.Context, id, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("skillbox: create destination file: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		return fmt.Errorf("skillbox: write file content: %w", err)
@@ -552,14 +552,14 @@ func (c *Client) UpdateFile(ctx context.Context, id, filePath string) (*FileInfo
 	if err != nil {
 		return nil, fmt.Errorf("skillbox: open file for update: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
 	errCh := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck
 		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 		if err != nil {
 			errCh <- err
@@ -622,14 +622,14 @@ func (c *Client) UploadFile(ctx context.Context, filePath string) (*FileInfo, er
 	if err != nil {
 		return nil, fmt.Errorf("skillbox: open file for upload: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
 	errCh := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck
 		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 		if err != nil {
 			errCh <- err
@@ -804,7 +804,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 	if err != nil {
 		return fmt.Errorf("skillbox: decompress gzip: %w", err)
 	}
-	defer gz.Close()
+	defer gz.Close() //nolint:errcheck
 
 	absDestDir, err := filepath.Abs(destDir)
 	if err != nil {
@@ -853,7 +853,7 @@ func writeFile(path string, r io.Reader, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("skillbox: create file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	if _, err := io.Copy(f, r); err != nil {
 		return fmt.Errorf("skillbox: write file %s: %w", path, err)

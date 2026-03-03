@@ -21,7 +21,7 @@ func TestCreateFile_InsertsAndReturnsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -68,7 +68,7 @@ func TestCreateFile_DBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -97,7 +97,7 @@ func TestGetFile_ReturnsRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -155,7 +155,7 @@ func TestGetFile_NullOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -191,7 +191,7 @@ func TestGetFile_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -216,7 +216,7 @@ func TestListFiles_FiltersByTenantSessionExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -258,7 +258,7 @@ func TestListFiles_DefaultLimitAndOffset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -289,7 +289,7 @@ func TestListFiles_CapsLimitAt200(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -316,7 +316,7 @@ func TestListFiles_DBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -340,7 +340,7 @@ func TestUpdateFile_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -371,7 +371,7 @@ func TestUpdateFile_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -399,7 +399,7 @@ func TestUpdateFile_DBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -423,7 +423,7 @@ func TestDeleteFile_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -446,7 +446,7 @@ func TestDeleteFile_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -469,7 +469,7 @@ func TestDeleteFile_DBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -493,7 +493,7 @@ func TestListFileVersions_ReturnsVersionChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -539,7 +539,7 @@ func TestListFileVersions_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -565,7 +565,7 @@ func TestListFileVersions_DBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 

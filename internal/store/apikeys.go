@@ -79,7 +79,7 @@ func (s *Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error)
 	if err != nil {
 		return nil, fmt.Errorf("list keys: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var keys []APIKey
 	for rows.Next() {
