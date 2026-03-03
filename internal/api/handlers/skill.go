@@ -83,6 +83,14 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin
 			return
 		}
 
+		// Normalize the zip: strip wrapper directories and macOS junk files
+		// so that SKILL.md and entrypoint scripts are at the archive root.
+		zipData, err = normalizeSkillZip(zipData)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
 		// Validate zip structure: must contain SKILL.md with valid frontmatter.
 		parsedSkill, err := validateSkillZip(zipData)
 		if err != nil {
@@ -167,6 +175,122 @@ func validateSkillZip(data []byte) (*skill.Skill, error) {
 	}
 
 	return parsed, nil
+}
+
+// junkFile returns true for macOS and other OS-generated files that should
+// be stripped from uploaded skill archives.
+func junkFile(name string) bool {
+	if strings.HasPrefix(name, "__MACOSX/") {
+		return true
+	}
+	base := name
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		base = name[idx+1:]
+	}
+	return base == ".DS_Store" || base == "Thumbs.db"
+}
+
+// commonPrefix returns the shared directory prefix across all zip entries.
+// Returns "" if files are already at the root or don't share a single prefix.
+func commonPrefix(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+
+	// Find the prefix of the first entry.
+	prefix := ""
+	if idx := strings.Index(names[0], "/"); idx >= 0 {
+		prefix = names[0][:idx+1]
+	}
+	if prefix == "" {
+		return ""
+	}
+
+	for _, name := range names[1:] {
+		if !strings.HasPrefix(name, prefix) {
+			return ""
+		}
+	}
+	return prefix
+}
+
+// normalizeSkillZip strips wrapper directories and macOS junk files from a
+// zip archive so that SKILL.md and other skill files are at the root level.
+// If the archive is already clean, the original bytes are returned as-is.
+func normalizeSkillZip(data []byte) ([]byte, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, errors.New("invalid zip archive: " + err.Error())
+	}
+
+	// Collect non-junk, non-directory file names.
+	var fileNames []string
+	for _, f := range reader.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if junkFile(f.Name) {
+			continue
+		}
+		fileNames = append(fileNames, f.Name)
+	}
+
+	prefix := commonPrefix(fileNames)
+	hasJunk := len(fileNames) < len(reader.File)
+
+	// Nothing to do — already clean.
+	if prefix == "" && !hasJunk {
+		return data, nil
+	}
+
+	// Repackage the zip with the prefix stripped and junk removed.
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	for _, f := range reader.File {
+		if junkFile(f.Name) {
+			continue
+		}
+
+		newName := strings.TrimPrefix(f.Name, prefix)
+		if newName == "" {
+			continue
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return nil, errors.New("failed to read " + f.Name + ": " + err.Error())
+		}
+
+		header := &zip.FileHeader{
+			Name:   newName,
+			Method: f.Method,
+		}
+		header.SetMode(f.Mode())
+		if f.FileInfo().IsDir() {
+			header.SetMode(f.Mode() | 0o755)
+		}
+
+		fw, err := w.CreateHeader(header)
+		if err != nil {
+			rc.Close() //nolint:errcheck
+			return nil, errors.New("failed to create zip entry " + newName + ": " + err.Error())
+		}
+
+		if !f.FileInfo().IsDir() {
+			if _, err := io.Copy(fw, rc); err != nil {
+				rc.Close() //nolint:errcheck
+				return nil, errors.New("failed to copy " + f.Name + ": " + err.Error())
+			}
+		}
+		rc.Close() //nolint:errcheck
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, errors.New("failed to finalize zip: " + err.Error())
+	}
+
+	return buf.Bytes(), nil
 }
 
 // ListSkills handles GET /v1/skills.
@@ -423,6 +547,20 @@ func DeleteSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 		if err := skill.ValidateVersion(version); err != nil {
 			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
 			return
+		}
+
+		// Resolve "latest" to the actual version before deleting.
+		if version == "latest" {
+			resolved, err := s.ResolveLatestVersion(c.Request.Context(), tenantID, name)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@latest")
+					return
+				}
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to resolve latest version: "+err.Error())
+				return
+			}
+			version = resolved
 		}
 
 		if err := reg.Delete(c.Request.Context(), tenantID, name, version); err != nil {
