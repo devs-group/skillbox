@@ -18,7 +18,11 @@ export function Footer() {
               <Link href="https://devs-group.com" target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary transition-colors underline underline-offset-4">
                 devs group
               </Link>
-              {" "}in Kreuzlingen, Switzerland
+              {" + "}
+              <Link href="https://www.codify.ch/en" target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary transition-colors underline underline-offset-4">
+                codify
+              </Link>
+              {" "}in Switzerland
             </span>
           </div>
 
