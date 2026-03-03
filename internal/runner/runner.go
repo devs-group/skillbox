@@ -324,6 +324,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 	}
 
 	// Step 10: Run the skill command via ExecD.
+	if loadedSkill.Entrypoint == "" {
+		result.setError("skill has no entrypoint (main.py, run.py, main.js, or main.sh) — it is an instruction-only skill and cannot be executed in a sandbox")
+		return result, nil
+	}
 	cmd := buildShellCommand(loadedSkill)
 	timeoutMs := int(timeout.Milliseconds())
 

@@ -110,14 +110,12 @@ func LoadSkill(ctx context.Context, reg *Registry, tenantID, skillName, version 
 		return nil, fmt.Errorf("parsing SKILL.md: %w", err)
 	}
 
-	// Find a recognized entrypoint script.
-	entrypoint, err := findEntrypoint(tmpDir)
-	if err != nil {
-		return nil, err
-	}
+	// Find a recognized entrypoint script (optional — instruction-only or
+	// library-style skills may not have one).
+	entrypoint, _ := findEntrypoint(tmpDir)
 
 	// Infer language from entrypoint extension if not specified.
-	if parsedSkill.Lang == "" {
+	if parsedSkill.Lang == "" && entrypoint != "" {
 		parsedSkill.Lang = skill.InferLangFromEntrypoint(entrypoint)
 	}
 
