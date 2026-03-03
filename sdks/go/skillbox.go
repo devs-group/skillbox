@@ -248,7 +248,7 @@ func (c *Client) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var result RunResult
 	if err := c.decodeResponse(resp, &result); err != nil {
@@ -263,7 +263,7 @@ func (c *Client) GetExecution(ctx context.Context, id string) (*RunResult, error
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var result RunResult
 	if err := c.decodeResponse(resp, &result); err != nil {
@@ -278,7 +278,7 @@ func (c *Client) GetExecutionLogs(ctx context.Context, id string) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", c.parseAPIError(resp)
@@ -674,7 +674,7 @@ func (c *Client) UploadFileFromReader(ctx context.Context, filename string, r io
 
 	errCh := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck
 		part, err := writer.CreateFormFile("file", filename)
 		if err != nil {
 			errCh <- err

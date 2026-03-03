@@ -313,7 +313,7 @@ func TestHealth(t *testing.T) {
 				t.Errorf("expected /health, got %s", r.URL.Path)
 			}
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, `{"status":"ok"}`)
+			fmt.Fprint(w, `{"status":"ok"}`) //nolint:errcheck
 		}))
 		defer srv.Close()
 
@@ -327,7 +327,7 @@ func TestHealth(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"error":"unavailable","message":"database down"}`)
+			fmt.Fprint(w, `{"error":"unavailable","message":"database down"}`) //nolint:errcheck
 		}))
 		defer srv.Close()
 
@@ -417,7 +417,7 @@ func TestGetExecutionLogs(t *testing.T) {
 	t.Run("plain_text", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprint(w, wantLogs)
+			fmt.Fprint(w, wantLogs) //nolint:errcheck
 		}))
 		defer srv.Close()
 

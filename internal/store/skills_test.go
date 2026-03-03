@@ -13,7 +13,7 @@ func TestResolveLatestVersion_ReturnsLatest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -39,7 +39,7 @@ func TestResolveLatestVersion_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -62,7 +62,7 @@ func TestGetSkill_ReturnsRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 
@@ -89,7 +89,7 @@ func TestGetSkill_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	s := &Store{db: db}
 

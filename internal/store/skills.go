@@ -47,7 +47,7 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string) ([]SkillRecord,
 	if err != nil {
 		return nil, fmt.Errorf("list skills: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var skills []SkillRecord
 	for rows.Next() {

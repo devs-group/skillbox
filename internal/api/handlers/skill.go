@@ -58,7 +58,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin
 				response.RespondError(c, http.StatusBadRequest, "bad_request", "missing 'file' field in multipart form")
 				return
 			}
-			defer file.Close()
+			defer file.Close() //nolint:errcheck
 
 			limited := io.LimitReader(file, cfg.MaxSkillSize+1)
 			zipData, err = io.ReadAll(limited)
@@ -257,7 +257,7 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve skill: "+err.Error())
 			return
 		}
-		defer rc.Close()
+		defer rc.Close() //nolint:errcheck
 
 		zipBytes, err := io.ReadAll(rc)
 		if err != nil {

@@ -172,7 +172,7 @@ func (s *Store) seedGooseFromLegacy() error {
 	if err != nil {
 		return fmt.Errorf("read legacy migrations: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var appliedVersions []int64
 	for rows.Next() {
