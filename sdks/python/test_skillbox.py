@@ -18,7 +18,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
-from skillbox import APIError, Client, RunResult, Skill
+from skillbox import APIError, Client, FileInfo, RunResult, Skill
 
 
 # ------------------------------------------------------------------
@@ -764,6 +764,391 @@ class TestNoAuth(unittest.TestCase):
             client.health()
         finally:
             server.shutdown()
+
+
+# ------------------------------------------------------------------
+# TestListFiles
+# ------------------------------------------------------------------
+
+
+class _ListFilesHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        assert self.path.startswith("/v1/files")
+        assert "session_id=sess-1" in self.path
+        assert "limit=10" in self.path
+        files = [
+            {
+                "id": "file-aaa",
+                "tenant_id": "tenant-1",
+                "session_id": "sess-1",
+                "execution_id": "exec-1",
+                "name": "report.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 12345,
+                "s3_key": "tenant-1/exec-1/v1/report.pdf",
+                "version": 1,
+                "parent_id": None,
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "id": "file-bbb",
+                "tenant_id": "tenant-1",
+                "session_id": "sess-1",
+                "name": "data.csv",
+                "content_type": "text/csv",
+                "size_bytes": 567,
+                "s3_key": "tenant-1/exec-1/v1/data.csv",
+                "version": 2,
+                "parent_id": "file-aaa",
+                "created_at": "2024-01-02T00:00:00Z",
+                "updated_at": "2024-01-02T00:00:00Z",
+            },
+        ]
+        body = json.dumps(files).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class TestListFiles(unittest.TestCase):
+    def setUp(self):
+        self.server, self.url = _start_server(_ListFilesHandler)
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_list_files(self):
+        client = Client(self.url, "sk-test", tenant_id="tenant-1")
+        files = client.list_files(session_id="sess-1", limit=10)
+
+        self.assertEqual(len(files), 2)
+        self.assertEqual(files[0].id, "file-aaa")
+        self.assertEqual(files[0].name, "report.pdf")
+        self.assertEqual(files[0].content_type, "application/pdf")
+        self.assertEqual(files[0].size_bytes, 12345)
+        self.assertEqual(files[0].version, 1)
+        self.assertIsNone(files[0].parent_id)
+
+        self.assertEqual(files[1].id, "file-bbb")
+        self.assertEqual(files[1].name, "data.csv")
+        self.assertEqual(files[1].version, 2)
+        self.assertEqual(files[1].parent_id, "file-aaa")
+
+
+# ------------------------------------------------------------------
+# TestGetFile
+# ------------------------------------------------------------------
+
+
+class _GetFileHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/files/file-exists":
+            resp = {
+                "id": "file-exists",
+                "tenant_id": "tenant-1",
+                "name": "readme.txt",
+                "content_type": "text/plain",
+                "size_bytes": 42,
+                "s3_key": "tenant-1/v1/readme.txt",
+                "version": 1,
+                "created_at": "2024-03-01T00:00:00Z",
+                "updated_at": "2024-03-01T00:00:00Z",
+            }
+            body = json.dumps(resp).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/v1/files/file-missing":
+            body = json.dumps({
+                "error": "not_found",
+                "message": "file not found",
+            }).encode()
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(400)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class TestGetFile(unittest.TestCase):
+    def setUp(self):
+        self.server, self.url = _start_server(_GetFileHandler)
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_get_file_success(self):
+        client = Client(self.url, "sk-test")
+        f = client.get_file("file-exists")
+
+        self.assertEqual(f.id, "file-exists")
+        self.assertEqual(f.name, "readme.txt")
+        self.assertEqual(f.content_type, "text/plain")
+        self.assertEqual(f.size_bytes, 42)
+        self.assertEqual(f.version, 1)
+
+    def test_get_file_not_found(self):
+        client = Client(self.url, "sk-test")
+        with self.assertRaises(APIError) as ctx:
+            client.get_file("file-missing")
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.error_code, "not_found")
+
+
+# ------------------------------------------------------------------
+# TestDownloadFile
+# ------------------------------------------------------------------
+
+
+class _DownloadFileHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/files/file-dl/download":
+            content = b"Hello, this is the file content!\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class TestDownloadFile(unittest.TestCase):
+    def setUp(self):
+        self.server, self.url = _start_server(_DownloadFileHandler)
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_download_file(self):
+        client = Client(self.url, "sk-test")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest = os.path.join(tmpdir, "downloaded.txt")
+            client.download_file("file-dl", dest)
+
+            self.assertTrue(os.path.isfile(dest))
+            with open(dest, "rb") as f:
+                self.assertEqual(f.read(), b"Hello, this is the file content!\n")
+
+    def test_download_file_path_traversal(self):
+        client = Client(self.url, "sk-test")
+        with self.assertRaises(ValueError) as ctx:
+            client.download_file("file-dl", "../../etc/passwd")
+        self.assertIn("path traversal", str(ctx.exception))
+
+
+# ------------------------------------------------------------------
+# TestUpdateFile
+# ------------------------------------------------------------------
+
+
+class _UpdateFileHandler(BaseHTTPRequestHandler):
+    def do_PUT(self):
+        assert self.path == "/v1/files/file-upd"
+        ct = self.headers["Content-Type"]
+        assert "multipart/form-data" in ct
+
+        body_len = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(body_len)
+        assert b"updated-content-here" in body
+
+        resp = {
+            "id": "file-upd",
+            "tenant_id": "tenant-1",
+            "name": "updated.txt",
+            "content_type": "text/plain",
+            "size_bytes": 20,
+            "s3_key": "tenant-1/v2/updated.txt",
+            "version": 2,
+            "parent_id": "file-upd-v1",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-06-01T00:00:00Z",
+        }
+        resp_body = json.dumps(resp).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(resp_body)))
+        self.end_headers()
+        self.wfile.write(resp_body)
+
+    def log_message(self, *args):
+        pass
+
+
+class TestUpdateFile(unittest.TestCase):
+    def setUp(self):
+        self.server, self.url = _start_server(_UpdateFileHandler)
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_update_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write(b"updated-content-here")
+            tmp_path = f.name
+
+        try:
+            client = Client(self.url, "sk-test")
+            result = client.update_file("file-upd", tmp_path)
+
+            self.assertEqual(result.id, "file-upd")
+            self.assertEqual(result.name, "updated.txt")
+            self.assertEqual(result.version, 2)
+            self.assertEqual(result.parent_id, "file-upd-v1")
+        finally:
+            os.unlink(tmp_path)
+
+    def test_update_file_not_found(self):
+        client = Client(self.url, "sk-test")
+        with self.assertRaises(FileNotFoundError):
+            client.update_file("file-upd", "/nonexistent/file.txt")
+
+
+# ------------------------------------------------------------------
+# TestDeleteFile
+# ------------------------------------------------------------------
+
+
+class _DeleteFileHandler(BaseHTTPRequestHandler):
+    def do_DELETE(self):
+        if self.path == "/v1/files/file-del":
+            self.send_response(204)
+            self.end_headers()
+        elif self.path == "/v1/files/file-missing":
+            body = json.dumps({
+                "error": "not_found",
+                "message": "file not found",
+            }).encode()
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(400)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class TestDeleteFile(unittest.TestCase):
+    def setUp(self):
+        self.server, self.url = _start_server(_DeleteFileHandler)
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_delete_file_success(self):
+        client = Client(self.url, "sk-test")
+        client.delete_file("file-del")  # should not raise
+
+    def test_delete_file_not_found(self):
+        client = Client(self.url, "sk-test")
+        with self.assertRaises(APIError) as ctx:
+            client.delete_file("file-missing")
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.error_code, "not_found")
+
+
+# ------------------------------------------------------------------
+# TestListFileVersions
+# ------------------------------------------------------------------
+
+
+class _ListFileVersionsHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        assert self.path == "/v1/files/file-ver/versions"
+        versions = [
+            {
+                "id": "file-ver-v1",
+                "tenant_id": "tenant-1",
+                "name": "report.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 1000,
+                "s3_key": "tenant-1/v1/report.pdf",
+                "version": 1,
+                "parent_id": None,
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "id": "file-ver-v2",
+                "tenant_id": "tenant-1",
+                "name": "report.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 1500,
+                "s3_key": "tenant-1/v2/report.pdf",
+                "version": 2,
+                "parent_id": "file-ver-v1",
+                "created_at": "2024-02-01T00:00:00Z",
+                "updated_at": "2024-02-01T00:00:00Z",
+            },
+            {
+                "id": "file-ver-v3",
+                "tenant_id": "tenant-1",
+                "name": "report.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 2000,
+                "s3_key": "tenant-1/v3/report.pdf",
+                "version": 3,
+                "parent_id": "file-ver-v2",
+                "created_at": "2024-03-01T00:00:00Z",
+                "updated_at": "2024-03-01T00:00:00Z",
+            },
+        ]
+        body = json.dumps(versions).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class TestListFileVersions(unittest.TestCase):
+    def setUp(self):
+        self.server, self.url = _start_server(_ListFileVersionsHandler)
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_list_file_versions(self):
+        client = Client(self.url, "sk-test")
+        versions = client.list_file_versions("file-ver")
+
+        self.assertEqual(len(versions), 3)
+        self.assertEqual(versions[0].id, "file-ver-v1")
+        self.assertEqual(versions[0].version, 1)
+        self.assertIsNone(versions[0].parent_id)
+
+        self.assertEqual(versions[1].id, "file-ver-v2")
+        self.assertEqual(versions[1].version, 2)
+        self.assertEqual(versions[1].parent_id, "file-ver-v1")
+
+        self.assertEqual(versions[2].id, "file-ver-v3")
+        self.assertEqual(versions[2].version, 3)
+        self.assertEqual(versions[2].size_bytes, 2000)
 
 
 if __name__ == "__main__":

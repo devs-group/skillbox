@@ -87,6 +87,24 @@ class SkillDetail:
     resources: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class FileInfo:
+    """A file record from the Skillbox API."""
+
+    id: str = ""
+    tenant_id: str = ""
+    session_id: str = ""
+    execution_id: str = ""
+    name: str = ""
+    content_type: str = ""
+    size_bytes: int = 0
+    s3_key: str = ""
+    version: int = 0
+    parent_id: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
 class APIError(Exception):
     """Raised when the Skillbox API responds with a non-2xx status code."""
 
@@ -268,6 +286,162 @@ class Client:
             resources=data.get("resources") or {},
         )
 
+    # ------------------------------------------------------------------
+    # File management
+    # ------------------------------------------------------------------
+
+    def list_files(
+        self,
+        *,
+        session_id: str = "",
+        execution_id: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[FileInfo]:
+        """List files, optionally filtered by session or execution.
+
+        Args:
+            session_id: Filter to files belonging to this session.
+            execution_id: Filter to files belonging to this execution.
+            limit: Maximum number of results to return.
+            offset: Number of results to skip for pagination.
+
+        Returns:
+            A list of :class:`FileInfo` objects.
+        """
+        params: list[str] = []
+        if session_id:
+            params.append(f"session_id={session_id}")
+        if execution_id:
+            params.append(f"execution_id={execution_id}")
+        params.append(f"limit={limit}")
+        params.append(f"offset={offset}")
+
+        qs = "&".join(params)
+        data = self._request("GET", f"/v1/files?{qs}")
+        if not isinstance(data, list):
+            return []
+        return [_parse_file_info(f) for f in data]
+
+    def get_file(self, file_id: str) -> FileInfo:
+        """Retrieve metadata for a single file.
+
+        Args:
+            file_id: The file UUID.
+
+        Returns:
+            A :class:`FileInfo` with the file metadata.
+        """
+        data = self._request("GET", f"/v1/files/{file_id}")
+        return _parse_file_info(data)
+
+    def download_file(self, file_id: str, dest_path: str) -> None:
+        """Download a file's content and write it to disk.
+
+        The destination path is validated to prevent directory traversal.
+
+        Args:
+            file_id: The file UUID.
+            dest_path: Local filesystem path to write the file to.
+
+        Raises:
+            ValueError: If dest_path attempts directory traversal.
+        """
+        abs_dest = os.path.abspath(dest_path)
+        cwd = os.path.abspath(".")
+        # Ensure dest_path does not escape via traversal.  We allow
+        # any absolute path that is not formed by ".." components.
+        if ".." in os.path.normpath(dest_path).split(os.sep):
+            raise ValueError(
+                f"skillbox: path traversal detected in dest_path: {dest_path}"
+            )
+
+        raw = self._request_raw("GET", f"/v1/files/{file_id}/download")
+        parent = os.path.dirname(abs_dest)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(abs_dest, "wb") as f:
+            f.write(raw)
+
+    def update_file(self, file_id: str, file_path: str) -> FileInfo:
+        """Upload a new version of an existing file.
+
+        Args:
+            file_id: The file UUID to update.
+            file_path: Path to the replacement file on disk.
+
+        Returns:
+            The updated :class:`FileInfo`.
+        """
+        path = Path(file_path)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"skillbox: file not found: {file_path}"
+            )
+
+        boundary = uuid.uuid4().hex
+        content_type = f"multipart/form-data; boundary={boundary}"
+
+        with open(path, "rb") as f:
+            file_data = f.read()
+
+        body = _build_multipart(boundary, path.name, file_data)
+
+        req = self._build_request("PUT", f"/v1/files/{file_id}")
+        req.add_header("Content-Type", content_type)
+        req.data = body
+
+        try:
+            resp = self._do(req)
+        except HTTPError as e:
+            raise _parse_api_error(e) from e
+
+        resp_body = resp.read()
+        if not resp_body:
+            return FileInfo()
+
+        try:
+            data = json.loads(resp_body)
+        except json.JSONDecodeError:
+            return FileInfo()
+
+        return _parse_file_info(data)
+
+    def delete_file(self, file_id: str) -> None:
+        """Delete a file.
+
+        The server returns 204 No Content on success.
+
+        Args:
+            file_id: The file UUID to delete.
+        """
+        req = self._build_request("DELETE", f"/v1/files/{file_id}")
+
+        try:
+            resp = self._do(req)
+        except HTTPError as e:
+            raise _parse_api_error(e) from e
+
+        resp.read()  # drain
+
+    def list_file_versions(self, file_id: str) -> list[FileInfo]:
+        """List all versions of a file.
+
+        Args:
+            file_id: The file UUID.
+
+        Returns:
+            A list of :class:`FileInfo` representing each version.
+        """
+        data = self._request("GET", f"/v1/files/{file_id}/versions")
+        if not isinstance(data, list):
+            return []
+        return [_parse_file_info(f) for f in data]
+
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+
     def health(self) -> None:
         """Check whether the Skillbox server is reachable.
 
@@ -377,6 +551,26 @@ def _parse_run_result(data: Any) -> RunResult:
         logs=data.get("logs", "") or "",
         duration_ms=data.get("duration_ms", 0) or 0,
         error=data.get("error", "") or "",
+    )
+
+
+def _parse_file_info(data: Any) -> FileInfo:
+    """Convert a JSON dict to a FileInfo."""
+    if not isinstance(data, dict):
+        return FileInfo()
+    return FileInfo(
+        id=data.get("id", ""),
+        tenant_id=data.get("tenant_id", ""),
+        session_id=data.get("session_id", ""),
+        execution_id=data.get("execution_id", ""),
+        name=data.get("name", ""),
+        content_type=data.get("content_type", ""),
+        size_bytes=data.get("size_bytes", 0) or 0,
+        s3_key=data.get("s3_key", ""),
+        version=data.get("version", 0) or 0,
+        parent_id=data.get("parent_id"),
+        created_at=data.get("created_at", ""),
+        updated_at=data.get("updated_at", ""),
     )
 
 

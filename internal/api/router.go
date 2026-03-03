@@ -5,6 +5,7 @@ import (
 
 	"github.com/devs-group/skillbox/internal/api/handlers"
 	"github.com/devs-group/skillbox/internal/api/middleware"
+	"github.com/devs-group/skillbox/internal/artifacts"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
@@ -20,7 +21,7 @@ import (
 // The router uses gin.New() (no default middleware) and explicitly adds
 // Recovery and structured RequestLogger middleware so the log output is
 // fully controlled.
-func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry) *gin.Engine {
+func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, col ...*artifacts.Collector) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(middleware.RequestLogger())
@@ -44,6 +45,20 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		v1.GET("/skills", handlers.ListSkills(s, reg))
 		v1.GET("/skills/:name/:version", handlers.GetSkill(reg, s))
 		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
+
+		// File/artifact endpoints
+		if len(col) > 0 && col[0] != nil {
+			filesHandler := handlers.NewFilesHandler(s, col[0])
+			files := v1.Group("/files")
+			{
+				files.GET("", filesHandler.List)
+				files.GET("/:id", filesHandler.Get)
+				files.GET("/:id/download", filesHandler.Download)
+				files.PUT("/:id", filesHandler.Update)
+				files.DELETE("/:id", filesHandler.Delete)
+				files.GET("/:id/versions", filesHandler.Versions)
+			}
+		}
 	}
 
 	return engine

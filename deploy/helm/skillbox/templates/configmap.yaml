@@ -17,3 +17,5 @@ data:
   SKILLBOX_S3_BUCKET_EXECUTIONS: {{ .Values.minio.bucketExecutions | quote }}
   SKILLBOX_S3_ENDPOINT: {{ .Values.minio.endpoint | quote }}
   SKILLBOX_S3_USE_SSL: {{ .Values.minio.useSSL | quote }}
+  SKILLBOX_OPENSANDBOX_URL: {{ .Values.opensandbox.url | quote }}
+  SKILLBOX_SANDBOX_EXPIRATION: {{ .Values.opensandbox.expiration | quote }}

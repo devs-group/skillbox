@@ -37,6 +37,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,30 @@ type SkillDetail struct {
 	Instructions string            `json:"instructions,omitempty"`
 	Timeout      string            `json:"timeout,omitempty"`
 	Resources    map[string]string `json:"resources,omitempty"`
+}
+
+// FileInfo represents a file record from the Skillbox API.
+type FileInfo struct {
+	ID          string  `json:"id"`
+	TenantID    string  `json:"tenant_id"`
+	SessionID   string  `json:"session_id,omitempty"`
+	ExecutionID string  `json:"execution_id,omitempty"`
+	Name        string  `json:"name"`
+	ContentType string  `json:"content_type"`
+	SizeBytes   int64   `json:"size_bytes"`
+	S3Key       string  `json:"s3_key"`
+	Version     int     `json:"version"`
+	ParentID    *string `json:"parent_id,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+}
+
+// FileFilter specifies query parameters for listing files.
+type FileFilter struct {
+	SessionID   string
+	ExecutionID string
+	Limit       int
+	Offset      int
 }
 
 // Option configures a [Client]. Pass options to [New].
@@ -400,6 +425,187 @@ func (c *Client) DownloadFiles(ctx context.Context, result *RunResult, destDir s
 	}
 
 	return extractTarGz(resp.Body, destDir)
+}
+
+// --------------------------------------------------------------------
+// File Management
+// --------------------------------------------------------------------
+
+// ListFiles returns files matching the given filter criteria. Use
+// [FileFilter] to scope results by session, execution, or page through
+// results with limit/offset.
+func (c *Client) ListFiles(ctx context.Context, filter FileFilter) ([]FileInfo, error) {
+	params := url.Values{}
+	if filter.SessionID != "" {
+		params.Set("session_id", filter.SessionID)
+	}
+	if filter.ExecutionID != "" {
+		params.Set("execution_id", filter.ExecutionID)
+	}
+	if filter.Limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", filter.Limit))
+	}
+	if filter.Offset > 0 {
+		params.Set("offset", fmt.Sprintf("%d", filter.Offset))
+	}
+
+	path := "/v1/files"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var files []FileInfo
+	if err := c.decodeResponse(resp, &files); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// GetFile retrieves the metadata for a single file by its ID.
+func (c *Client) GetFile(ctx context.Context, id string) (*FileInfo, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/files/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var file FileInfo
+	if err := c.decodeResponse(resp, &file); err != nil {
+		return nil, err
+	}
+	return &file, nil
+}
+
+// DownloadFile fetches the raw content of a file and writes it to destPath
+// on disk. The destination path is validated to prevent path-traversal
+// attacks — it must resolve to an absolute path that does not contain "..".
+func (c *Client) DownloadFile(ctx context.Context, id, destPath string) error {
+	// Validate destination path to prevent path traversal.
+	absPath, err := filepath.Abs(destPath)
+	if err != nil {
+		return fmt.Errorf("skillbox: resolve destination path: %w", err)
+	}
+	if strings.Contains(absPath, "..") {
+		return fmt.Errorf("skillbox: path traversal detected in destination: %s", destPath)
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/files/"+id+"/download", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+
+	// Ensure the parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
+		return fmt.Errorf("skillbox: create parent directory: %w", err)
+	}
+
+	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) // #nosec G304 -- path is validated above
+	if err != nil {
+		return fmt.Errorf("skillbox: create destination file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("skillbox: write file content: %w", err)
+	}
+	return nil
+}
+
+// UpdateFile uploads a new version of an existing file. The file at
+// filePath is sent as a multipart form with field name "file". The server
+// responds with the updated [FileInfo] including the new version number.
+func (c *Client) UpdateFile(ctx context.Context, id, filePath string) (*FileInfo, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: open file for update: %w", err)
+	}
+	defer f.Close()
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- writer.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+"/v1/files/"+id, pr)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: create update request: %w", err)
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: update file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if writeErr := <-errCh; writeErr != nil {
+		return nil, fmt.Errorf("skillbox: write multipart body: %w", writeErr)
+	}
+
+	var file FileInfo
+	if err := c.decodeResponse(resp, &file); err != nil {
+		return nil, err
+	}
+	return &file, nil
+}
+
+// DeleteFile removes a file by its ID. The server responds with 204 No
+// Content on success.
+func (c *Client) DeleteFile(ctx context.Context, id string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/files/"+id, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// ListFileVersions returns all versions of a file, ordered by version
+// number. Each entry is a full [FileInfo] record.
+func (c *Client) ListFileVersions(ctx context.Context, id string) ([]FileInfo, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/files/"+id+"/versions", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var versions []FileInfo
+	if err := c.decodeResponse(resp, &versions); err != nil {
+		return nil, err
+	}
+	return versions, nil
 }
 
 // --------------------------------------------------------------------

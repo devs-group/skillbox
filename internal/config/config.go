@@ -25,24 +25,38 @@ type Config struct {
 	S3BucketExecs     string
 	S3UseSSL          bool
 
-	// Docker
-	DockerHost        string
+	// OpenSandbox
+	OpenSandboxURL    string
+	OpenSandboxAPIKey string
+	SandboxExpiration time.Duration
 	ImageAllowlist    []string
 
 	// Execution limits
 	DefaultTimeout         time.Duration
 	MaxTimeout             time.Duration
 	DefaultMemory          int64   // bytes
-	DefaultCPU             float64 // Docker CPU quota (e.g. 0.5 = half a core)
+	DefaultCPU             float64 // fractional CPU (e.g. 0.5 = half a core)
 	MaxOutputSize          int64   // bytes
 	MaxSkillSize           int64   // bytes
-	MaxConcurrentExecs     int     // max parallel container executions
+	MaxConcurrentExecs     int     // max parallel sandbox executions
 
 	// Server
 	APIPort           string
 
 	// Observability
 	LogLevel          string
+}
+
+// DefaultMemoryStr returns the default memory limit as a Kubernetes-style
+// string suitable for passing to OpenSandbox (e.g. "256Mi").
+func (c *Config) DefaultMemoryStr() string {
+	return envOrDefault("SKILLBOX_DEFAULT_MEMORY", "256Mi")
+}
+
+// DefaultCPUStr returns the default CPU limit as a string suitable for
+// passing to OpenSandbox (e.g. "500m" for 0.5 cores).
+func (c *Config) DefaultCPUStr() string {
+	return envOrDefault("SKILLBOX_DEFAULT_CPU", "500m")
 }
 
 // Load reads configuration from environment variables, validates required
@@ -65,21 +79,24 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DBDSN:          require("SKILLBOX_DB_DSN"),
-		RedisURL:       get("SKILLBOX_REDIS_URL"),
-		S3Endpoint:     require("SKILLBOX_S3_ENDPOINT"),
-		S3AccessKey:    require("SKILLBOX_S3_ACCESS_KEY"),
-		S3SecretKey:    require("SKILLBOX_S3_SECRET_KEY"),
-		S3BucketSkills: envOrDefault("SKILLBOX_S3_BUCKET_SKILLS", "skills"),
-		S3BucketExecs:  envOrDefault("SKILLBOX_S3_BUCKET_EXECUTIONS", "executions"),
-		DockerHost:     envOrDefault("SKILLBOX_DOCKER_HOST", "tcp://localhost:2375"),
-		APIPort:        envOrDefault("SKILLBOX_API_PORT", "8080"),
-		LogLevel:       envOrDefault("SKILLBOX_LOG_LEVEL", "info"),
+		DBDSN:             require("SKILLBOX_DB_DSN"),
+		RedisURL:          get("SKILLBOX_REDIS_URL"),
+		S3Endpoint:        require("SKILLBOX_S3_ENDPOINT"),
+		S3AccessKey:       require("SKILLBOX_S3_ACCESS_KEY"),
+		S3SecretKey:       require("SKILLBOX_S3_SECRET_KEY"),
+		S3BucketSkills:    envOrDefault("SKILLBOX_S3_BUCKET_SKILLS", "skills"),
+		S3BucketExecs:     envOrDefault("SKILLBOX_S3_BUCKET_EXECUTIONS", "executions"),
+		OpenSandboxURL:    envOrDefault("SKILLBOX_OPENSANDBOX_URL", "http://localhost:8080"),
+		OpenSandboxAPIKey: require("SKILLBOX_OPENSANDBOX_API_KEY"),
+		APIPort:           envOrDefault("SKILLBOX_API_PORT", "8080"),
+		LogLevel:          envOrDefault("SKILLBOX_LOG_LEVEL", "info"),
 	}
 
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
+
+	var err error
 
 	// S3 SSL
 	useSSL, err := parseBool(envOrDefault("SKILLBOX_S3_USE_SSL", "false"))
@@ -87,6 +104,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SKILLBOX_S3_USE_SSL: %w", err)
 	}
 	cfg.S3UseSSL = useSSL
+
+	// Sandbox expiration
+	cfg.SandboxExpiration, err = time.ParseDuration(envOrDefault("SKILLBOX_SANDBOX_EXPIRATION", "5m"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SANDBOX_EXPIRATION: %w", err)
+	}
 
 	// Image allowlist
 	raw := envOrDefault("SKILLBOX_IMAGE_ALLOWLIST", "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5")

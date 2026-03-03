@@ -14,6 +14,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("SKILLBOX_S3_ENDPOINT", "localhost:9000")
 	t.Setenv("SKILLBOX_S3_ACCESS_KEY", "minioadmin")
 	t.Setenv("SKILLBOX_S3_SECRET_KEY", "minioadmin")
+	t.Setenv("SKILLBOX_OPENSANDBOX_API_KEY", "test-api-key")
 }
 
 func TestLoad_AllRequired(t *testing.T) {
@@ -39,10 +40,11 @@ func TestLoad_AllRequired(t *testing.T) {
 }
 
 func TestLoad_MissingDBDSN(t *testing.T) {
-	// Set S3 vars but omit DB DSN.
+	// Set S3 vars and API key but omit DB DSN.
 	t.Setenv("SKILLBOX_S3_ENDPOINT", "localhost:9000")
 	t.Setenv("SKILLBOX_S3_ACCESS_KEY", "minioadmin")
 	t.Setenv("SKILLBOX_S3_SECRET_KEY", "minioadmin")
+	t.Setenv("SKILLBOX_OPENSANDBOX_API_KEY", "test-api-key")
 
 	_, err := Load()
 	if err == nil {
@@ -70,6 +72,7 @@ func TestLoad_MissingS3(t *testing.T) {
 			t.Setenv("SKILLBOX_S3_ENDPOINT", "localhost:9000")
 			t.Setenv("SKILLBOX_S3_ACCESS_KEY", "minioadmin")
 			t.Setenv("SKILLBOX_S3_SECRET_KEY", "minioadmin")
+			t.Setenv("SKILLBOX_OPENSANDBOX_API_KEY", "test-api-key")
 
 			// Unset the one we want to test as missing.
 			t.Setenv(tt.omitKey, "")
@@ -105,8 +108,14 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.S3BucketExecs != "executions" {
 		t.Errorf("S3BucketExecs = %q, want %q", cfg.S3BucketExecs, "executions")
 	}
-	if cfg.DockerHost != "tcp://localhost:2375" {
-		t.Errorf("DockerHost = %q, want %q", cfg.DockerHost, "tcp://localhost:2375")
+	if cfg.OpenSandboxURL != "http://localhost:8080" {
+		t.Errorf("OpenSandboxURL = %q, want %q", cfg.OpenSandboxURL, "http://localhost:8080")
+	}
+	if cfg.OpenSandboxAPIKey != "test-api-key" {
+		t.Errorf("OpenSandboxAPIKey = %q, want %q", cfg.OpenSandboxAPIKey, "test-api-key")
+	}
+	if cfg.SandboxExpiration != 5*time.Minute {
+		t.Errorf("SandboxExpiration = %v, want %v", cfg.SandboxExpiration, 5*time.Minute)
 	}
 	if cfg.S3UseSSL != false {
 		t.Errorf("S3UseSSL = %v, want false", cfg.S3UseSSL)
@@ -149,7 +158,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("SKILLBOX_LOG_LEVEL", "debug")
 	t.Setenv("SKILLBOX_S3_BUCKET_SKILLS", "my-skills")
 	t.Setenv("SKILLBOX_S3_BUCKET_EXECUTIONS", "my-execs")
-	t.Setenv("SKILLBOX_DOCKER_HOST", "unix:///var/run/docker.sock")
+	t.Setenv("SKILLBOX_OPENSANDBOX_URL", "http://sandbox.example.com:9090")
+	t.Setenv("SKILLBOX_SANDBOX_EXPIRATION", "10m")
 	t.Setenv("SKILLBOX_S3_USE_SSL", "true")
 	t.Setenv("SKILLBOX_IMAGE_ALLOWLIST", "alpine:3.19,ubuntu:22.04")
 	t.Setenv("SKILLBOX_DEFAULT_TIMEOUT", "30s")
@@ -177,8 +187,11 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.S3BucketExecs != "my-execs" {
 		t.Errorf("S3BucketExecs = %q, want %q", cfg.S3BucketExecs, "my-execs")
 	}
-	if cfg.DockerHost != "unix:///var/run/docker.sock" {
-		t.Errorf("DockerHost = %q, want %q", cfg.DockerHost, "unix:///var/run/docker.sock")
+	if cfg.OpenSandboxURL != "http://sandbox.example.com:9090" {
+		t.Errorf("OpenSandboxURL = %q, want %q", cfg.OpenSandboxURL, "http://sandbox.example.com:9090")
+	}
+	if cfg.SandboxExpiration != 10*time.Minute {
+		t.Errorf("SandboxExpiration = %v, want %v", cfg.SandboxExpiration, 10*time.Minute)
 	}
 	if cfg.S3UseSSL != true {
 		t.Errorf("S3UseSSL = %v, want true", cfg.S3UseSSL)

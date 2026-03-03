@@ -36,8 +36,11 @@ spec:
             - secretRef:
                 name: skillbox-secrets
           env:
-            - name: SKILLBOX_DOCKER_HOST
-              value: "tcp://localhost:2375"
+            - name: SKILLBOX_OPENSANDBOX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: skillbox-secrets
+                  key: SKILLBOX_OPENSANDBOX_API_KEY
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -68,70 +71,7 @@ spec:
             - name: tmp
               mountPath: /tmp
 
-        # --- Docker Socket Proxy Sidecar ---
-        - name: docker-proxy
-          image: tecnativa/docker-socket-proxy:latest
-          ports:
-            - containerPort: 2375
-              name: docker
-              protocol: TCP
-          env:
-            - name: CONTAINERS
-              value: "1"
-            - name: IMAGES
-              value: "1"
-            - name: POST
-              value: "1"
-            - name: DELETE
-              value: "1"
-            - name: ALLOW_START
-              value: "1"
-            - name: ALLOW_STOP
-              value: "1"
-            - name: AUTH
-              value: "0"
-            - name: SECRETS
-              value: "0"
-            - name: EXEC
-              value: "0"
-            - name: BUILD
-              value: "0"
-            - name: COMMIT
-              value: "0"
-            - name: NETWORKS
-              value: "0"
-            - name: VOLUMES
-              value: "0"
-            - name: SWARM
-              value: "0"
-            - name: NODES
-              value: "0"
-            - name: SERVICES
-              value: "0"
-            - name: TASKS
-              value: "0"
-            - name: PLUGINS
-              value: "0"
-            - name: SYSTEM
-              value: "0"
-          securityContext:
-            readOnlyRootFilesystem: true
-          resources:
-            requests:
-              cpu: 50m
-              memory: 32Mi
-            limits:
-              cpu: 200m
-              memory: 64Mi
-          volumeMounts:
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
-
       volumes:
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
         - name: tmp
           emptyDir:
             sizeLimit: 100Mi

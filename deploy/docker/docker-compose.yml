@@ -9,26 +9,23 @@ services:
       - "${SKILLBOX_GRPC_PORT:-9090}:9090"
     environment:
       SKILLBOX_DB_DSN: "postgres://skillbox:skillbox@postgres:5432/skillbox?sslmode=disable"
-      SKILLBOX_REDIS_URL: "redis://redis:6379/0"
       SKILLBOX_S3_ENDPOINT: "minio:9000"
       SKILLBOX_S3_ACCESS_KEY: "minioadmin"
       SKILLBOX_S3_SECRET_KEY: "minioadmin"
       SKILLBOX_S3_USE_SSL: "false"
-      SKILLBOX_DOCKER_HOST: "tcp://docker-proxy:2375"
+      SKILLBOX_OPENSANDBOX_URL: "http://opensandbox:8080"
+      SKILLBOX_OPENSANDBOX_API_KEY: "${OPENSANDBOX_API_KEY:-skillbox-dev-key}"
       SKILLBOX_LOG_LEVEL: "debug"
       SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-      docker-proxy:
-        condition: service_started
+      opensandbox:
+        condition: service_healthy
     networks:
       - backend
-      - docker
     restart: unless-stopped
 
   # --- PostgreSQL ---
@@ -50,23 +47,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    restart: unless-stopped
-
-  # --- Redis ---
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "${SKILLBOX_REDIS_PORT:-6379}:6379"
-    volumes:
-      - redisdata:/data
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     restart: unless-stopped
 
   # --- MinIO (S3-compatible object storage) ---
@@ -107,41 +87,29 @@ services:
       echo 'Buckets created successfully';
       "
 
-  # --- Docker Socket Proxy ---
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+  # --- OpenSandbox ---
+  opensandbox:
+    image: opensandbox/server:latest
+    command: ["opensandbox-server", "--config", "/etc/opensandbox/config.toml"]
+    ports:
+      - "8081:8080"
     environment:
-      CONTAINERS: 1
-      IMAGES: 1
-      POST: 1
-      DELETE: 1
-      ALLOW_START: 1
-      ALLOW_STOP: 1
-      AUTH: 0
-      SECRETS: 0
-      EXEC: 0
-      BUILD: 0
-      COMMIT: 0
-      CONFIGS: 0
-      DISTRIBUTION: 0
-      NETWORKS: 0
-      NODES: 0
-      PLUGINS: 0
-      SERVICES: 0
-      SESSION: 0
-      SWARM: 0
-      SYSTEM: 0
-      TASKS: 0
-      VOLUMES: 0
+      OPEN_SANDBOX_API_KEY: "${OPENSANDBOX_API_KEY:-skillbox-dev-key}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./opensandbox-config.toml:/etc/opensandbox/config.toml:ro
     networks:
+      - backend
       - docker
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/sandboxes"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:
-  redisdata:
   miniodata:
 
 networks:

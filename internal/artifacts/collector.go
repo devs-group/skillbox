@@ -95,6 +95,42 @@ func (c *Collector) Collect(ctx context.Context, tenantID, executionID, filesDir
 	return presignedURL.String(), filesList, nil
 }
 
+// DownloadObject returns a ReadCloser for the object stored at the given
+// S3 key. The caller is responsible for closing the returned reader.
+func (c *Collector) DownloadObject(ctx context.Context, key string) (io.ReadCloser, int64, string, error) {
+	obj, err := c.client.GetObject(ctx, c.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("getting object %q: %w", key, err)
+	}
+	info, err := obj.Stat()
+	if err != nil {
+		_ = obj.Close()
+		return nil, 0, "", fmt.Errorf("stat object %q: %w", key, err)
+	}
+	return obj, info.Size, info.ContentType, nil
+}
+
+// UploadObject uploads data from reader to the given S3 key with the
+// specified content type and returns the number of bytes written.
+func (c *Collector) UploadObject(ctx context.Context, key string, reader io.Reader, size int64, contentType string) (int64, error) {
+	info, err := c.client.PutObject(ctx, c.bucket, key, reader, size, minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("uploading object to %q: %w", key, err)
+	}
+	return info.Size, nil
+}
+
+// DeleteObject removes the object at the given S3 key.
+func (c *Collector) DeleteObject(ctx context.Context, key string) error {
+	err := c.client.RemoveObject(ctx, c.bucket, key, minio.RemoveObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("removing object %q: %w", key, err)
+	}
+	return nil
+}
+
 // listFiles walks the given directory and returns relative paths of all
 // regular files found. It skips directories, symlinks, and other non-regular
 // entries.

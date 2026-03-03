@@ -1,8 +1,6 @@
 package runner
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,12 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-
 	"github.com/devs-group/skillbox/internal/artifacts"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
+	"github.com/devs-group/skillbox/internal/sandbox"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -53,9 +49,9 @@ func (r *RunResult) setError(msg string) {
 	r.Error = &msg
 }
 
-// Runner orchestrates skill execution in sandboxed Docker containers.
+// Runner orchestrates skill execution in OpenSandbox sandboxes.
 type Runner struct {
-	docker    *client.Client
+	sandbox   *sandbox.Client
 	config    *config.Config
 	registry  *registry.Registry
 	store     *store.Store
@@ -64,9 +60,9 @@ type Runner struct {
 }
 
 // New creates a Runner with all required dependencies.
-func New(cfg *config.Config, docker *client.Client, reg *registry.Registry, st *store.Store, art *artifacts.Collector) *Runner {
+func New(cfg *config.Config, sb *sandbox.Client, reg *registry.Registry, st *store.Store, art *artifacts.Collector) *Runner {
 	return &Runner{
-		docker:    docker,
+		sandbox:   sb,
 		config:    cfg,
 		registry:  reg,
 		store:     st,
@@ -75,12 +71,12 @@ func New(cfg *config.Config, docker *client.Client, reg *registry.Registry, st *
 	}
 }
 
-// Run executes a skill in a sandboxed Docker container. It handles the
-// complete lifecycle: record creation, skill loading, container setup,
-// execution, output collection, artifact uploading, and cleanup.
+// Run executes a skill in an OpenSandbox sandbox. It handles the complete
+// lifecycle: record creation, skill loading, sandbox setup, file upload,
+// command execution, output collection, artifact uploading, and cleanup.
 //
 // The context controls the overall execution timeout. If the context is
-// cancelled or times out, the container is killed and the execution is
+// cancelled or times out, the sandbox is deleted and the execution is
 // marked as "timeout".
 func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, err error) {
 	// Acquire a concurrency slot (blocks if all slots are in use).
@@ -158,8 +154,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 	}()
 
 	// Step 3: Validate image against allowlist.
-	// Use the skill's DefaultImage() method which returns the custom image
-	// if set, or resolves the default for the language.
 	image := loadedSkill.Skill.DefaultImage()
 	if err := ValidateImage(image, r.config.ImageAllowlist); err != nil {
 		result.setError(fmt.Sprintf("image validation: %v", err))
@@ -167,24 +161,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 	}
 
 	// Determine resource limits. Use skill-level overrides or server defaults.
-	memoryBytes := r.config.DefaultMemory
+	memoryStr := r.config.DefaultMemoryStr()
 	if loadedSkill.Skill.Resources.Memory != "" {
-		parsed, parseErr := ParseMemoryLimit(loadedSkill.Skill.Resources.Memory)
-		if parseErr != nil {
-			result.setError(fmt.Sprintf("parsing memory limit: %v", parseErr))
-			return result, nil
-		}
-		memoryBytes = parsed
+		memoryStr = loadedSkill.Skill.Resources.Memory
 	}
 
-	cpuQuota := int64(r.config.DefaultCPU * 100000)
+	cpuStr := r.config.DefaultCPUStr()
 	if loadedSkill.Skill.Resources.CPU != "" {
-		parsed, parseErr := ParseCPULimit(loadedSkill.Skill.Resources.CPU)
-		if parseErr != nil {
-			result.setError(fmt.Sprintf("parsing CPU limit: %v", parseErr))
-			return result, nil
-		}
-		cpuQuota = parsed
+		cpuStr = loadedSkill.Skill.Resources.CPU
 	}
 
 	// Determine execution timeout.
@@ -201,204 +185,239 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		inputJSON = json.RawMessage("{}")
 	}
 
-	// Step 5: Build the container command based on language.
-	cmd := buildCommand(loadedSkill)
-
-	// Build environment variables.
-	envVars := []string{
-		"SANDBOX_INPUT=" + string(inputJSON),
-		"SANDBOX_OUTPUT=/sandbox/out/output.json",
-		"SANDBOX_FILES_DIR=/sandbox/out/files/",
-		"SKILL_INSTRUCTIONS=" + loadedSkill.Skill.Instructions,
-		"HOME=/tmp",
+	// Step 5: Build environment variables, filtering blocked ones.
+	envVars := map[string]string{
+		"SANDBOX_INPUT":      string(inputJSON),
+		"SANDBOX_OUTPUT":     "/sandbox/out/output.json",
+		"SANDBOX_FILES_DIR":  "/sandbox/out/files/",
+		"SKILL_INSTRUCTIONS": loadedSkill.Skill.Instructions,
+		"HOME":               "/tmp",
 	}
 	for k, v := range req.Env {
 		if isBlockedEnvVar(k) {
 			result.setError(fmt.Sprintf("env var %q is not allowed", k))
 			return result, nil
 		}
-		envVars = append(envVars, k+"="+v)
+		envVars[k] = v
 	}
 
-	// Step 6: Create container with full security hardening.
-	// We use CopyToContainer to inject files instead of bind mounts, because
-	// the skillbox server may run inside a container itself (Docker Compose /
-	// K8s sidecar pattern) and host-path bind mounts would reference paths
-	// on the Docker host rather than inside the server container.
-	pidsLimit := int64(128)
-	containerCfg := &container.Config{
+	// Step 6: Create OpenSandbox sandbox.
+	// Convert the sandbox expiration to seconds, clamped to the API limits (60-86400).
+	sandboxTimeoutSec := int(r.config.SandboxExpiration.Seconds())
+	if sandboxTimeoutSec < 60 {
+		sandboxTimeoutSec = 60
+	}
+	if sandboxTimeoutSec > 86400 {
+		sandboxTimeoutSec = 86400
+	}
+
+	sbOpts := sandbox.SandboxOpts{
 		Image:      image,
-		Cmd:        cmd,
-		User:       "65534:65534",
+		Entrypoint: []string{"tail", "-f", "/dev/null"},
 		Env:        envVars,
-		WorkingDir: "/sandbox",
-		Labels: map[string]string{
+		Metadata: map[string]string{
 			"managed-by": "skillbox",
 			"tenant":     req.TenantID,
 			"skill":      req.Skill,
 			"execution":  executionID,
 		},
-	}
-	hostCfg := &container.HostConfig{
-		NetworkMode: "bridge",
-		CapDrop:     []string{"ALL"},
-		SecurityOpt: []string{"no-new-privileges:true"},
-		Resources: container.Resources{
-			Memory:     memoryBytes,
-			MemorySwap: memoryBytes,
-			CPUQuota:   cpuQuota,
-			CPUPeriod:  100000,
-			PidsLimit:  &pidsLimit,
+		ResourceLimits: map[string]string{
+			"cpu":    cpuStr,
+			"memory": memoryStr,
 		},
-		Tmpfs: map[string]string{
-			"/tmp": "rw,exec,nosuid,size=256m",
+		NetworkPolicy: &sandbox.NetworkPolicy{
+			DefaultAction: "deny",
 		},
-		AutoRemove: false,
+		Timeout: sandboxTimeoutSec,
 	}
 
-	createResp, createErr := r.docker.ContainerCreate(execCtx, containerCfg, hostCfg, nil, nil, "")
+	sbResp, createErr := r.sandbox.CreateSandbox(execCtx, sbOpts)
 	if createErr != nil {
-		result.setError(fmt.Sprintf("creating container: %v", createErr))
+		result.setError(fmt.Sprintf("creating sandbox: %v", createErr))
 		return result, nil
 	}
-	containerID := createResp.ID
+	sandboxID := sbResp.ID
 
-	// Ensure container is always force-removed.
+	// Ensure sandbox is always deleted on exit.
 	defer func() {
-		removeCtx, removeCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer removeCancel()
-		if removeErr := r.docker.ContainerRemove(removeCtx, containerID, container.RemoveOptions{
-			Force:         true,
-			RemoveVolumes: true,
-		}); removeErr != nil {
-			log.Printf("runner: failed to remove container %s: %v", shortID(containerID), removeErr)
+		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer deleteCancel()
+		if deleteErr := r.sandbox.DeleteSandbox(deleteCtx, sandboxID); deleteErr != nil {
+			log.Printf("runner: failed to delete sandbox %s: %v", shortID(sandboxID), deleteErr)
 		}
 	}()
 
-	// Step 6b: Build a single tar archive containing the entire /sandbox
-	// tree (scripts, input.json, output dirs) and copy it to "/" in one call.
-	sandboxTar, tarErr := buildSandboxTar(loadedSkill.Dir, inputJSON)
-	if tarErr != nil {
-		result.setError(fmt.Sprintf("creating sandbox tar: %v", tarErr))
-		return result, nil
-	}
-	if cpErr := r.docker.CopyToContainer(execCtx, containerID, "/", sandboxTar, container.CopyToContainerOptions{}); cpErr != nil {
-		result.setError(fmt.Sprintf("copying sandbox to container: %v", cpErr))
+	// Step 7: Wait for the sandbox to reach Running state and discover ExecD.
+	if _, waitErr := r.sandbox.WaitReady(execCtx, sandboxID); waitErr != nil {
+		result.setError(fmt.Sprintf("waiting for sandbox to become ready: %v", waitErr))
 		return result, nil
 	}
 
-	// Step 7: Start container.
-	if startErr := r.docker.ContainerStart(execCtx, containerID, container.StartOptions{}); startErr != nil {
-		result.setError(fmt.Sprintf("starting container: %v", startErr))
+	execdURL, _, discoverErr := r.sandbox.DiscoverExecD(execCtx, sandboxID)
+	if discoverErr != nil {
+		result.setError(fmt.Sprintf("discovering execd endpoint: %v", discoverErr))
 		return result, nil
 	}
 
-	// Step 8: Wait for container to exit.
-	waitCh, errCh := r.docker.ContainerWait(execCtx, containerID, container.WaitConditionNotRunning)
+	// Step 8: Poll ExecD until ready (200ms interval, 30s timeout).
+	if pingErr := pollExecD(execCtx, r.sandbox, execdURL, 200*time.Millisecond, 30*time.Second); pingErr != nil {
+		result.setError(fmt.Sprintf("waiting for execd to become ready: %v", pingErr))
+		return result, nil
+	}
 
-	var exitCode int64
-	select {
-	case waitResult := <-waitCh:
-		exitCode = waitResult.StatusCode
-		if waitResult.Error != nil {
-			result.setError(waitResult.Error.Message)
-		}
-	case waitErr := <-errCh:
+	// Step 9: Upload skill files + input.json to the sandbox.
+	uploadFiles, walkErr := buildUploadFiles(loadedSkill.Dir, inputJSON)
+	if walkErr != nil {
+		result.setError(fmt.Sprintf("preparing files for upload: %v", walkErr))
+		return result, nil
+	}
+	if uploadErr := r.sandbox.UploadFiles(execCtx, execdURL, uploadFiles); uploadErr != nil {
+		result.setError(fmt.Sprintf("uploading files to sandbox: %v", uploadErr))
+		return result, nil
+	}
+
+	// Step 10: Run the skill command via ExecD.
+	cmd := buildShellCommand(loadedSkill)
+	timeoutMs := int(timeout.Milliseconds())
+
+	cmdResult, runErr := r.sandbox.RunCommand(execCtx, execdURL, cmd, "/sandbox", timeoutMs)
+	if runErr != nil {
 		if execCtx.Err() != nil {
-			killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer killCancel()
-			if killErr := r.docker.ContainerKill(killCtx, containerID, "SIGKILL"); killErr != nil {
-				log.Printf("runner: failed to kill timed-out container %s: %v", shortID(containerID), killErr)
-			}
 			result.Status = "timeout"
 			result.setError(fmt.Sprintf("execution timed out after %s", timeout))
-			result.Logs = collectLogs(r.docker, containerID, r.config.MaxOutputSize)
 			return result, nil
 		}
-		result.setError(fmt.Sprintf("waiting for container: %v", waitErr))
+		result.setError(fmt.Sprintf("running command in sandbox: %v", runErr))
 		return result, nil
 	}
 
-	// Step 10: Collect logs.
-	result.Logs = collectLogs(r.docker, containerID, r.config.MaxOutputSize)
-
-	// Step 11: Copy /sandbox/out/ back from the container and read output.json.
-	outDir, outErr := r.copyFromContainer(execCtx, containerID, "/sandbox/out")
-	if outErr != nil {
-		log.Printf("runner: failed to copy output from container %s: %v", shortID(containerID), outErr)
-	} else {
-		defer func() {
-			if removeErr := os.RemoveAll(outDir); removeErr != nil {
-				log.Printf("runner: failed to remove outdir %s: %v", outDir, removeErr)
-			}
-		}()
-
-		// Read output.json if it exists.
-		outputPath := filepath.Join(outDir, "out", "output.json")
-		if outputData, readErr := os.ReadFile(outputPath); readErr == nil {
-			if json.Valid(outputData) {
-				result.Output = json.RawMessage(outputData)
-			} else {
-				log.Printf("runner: output.json for execution %s is not valid JSON", executionID)
-			}
+	// Collect logs from stdout/stderr.
+	var logBuf strings.Builder
+	if cmdResult.Stdout != "" {
+		logBuf.WriteString(cmdResult.Stdout)
+	}
+	if cmdResult.Stderr != "" {
+		if logBuf.Len() > 0 {
+			logBuf.WriteString("\n")
 		}
+		logBuf.WriteString(cmdResult.Stderr)
+	}
+	result.Logs = truncateString(logBuf.String(), r.config.MaxOutputSize)
 
-		// Step 12: Collect file artifacts.
-		if r.artifacts != nil {
-			filesDir := filepath.Join(outDir, "out", "files")
-			artifactURL, filesList, collectErr := r.artifacts.Collect(ctx, req.TenantID, executionID, filesDir)
+	// Step 11: Check for output.json.
+	outputRC, dlErr := r.sandbox.DownloadFile(execCtx, execdURL, "/sandbox/out/output.json")
+	if dlErr == nil {
+		outputData, readErr := io.ReadAll(io.LimitReader(outputRC, 512<<20))
+		outputRC.Close()
+		if readErr != nil {
+			log.Printf("runner: failed to read output.json for execution %s: %v", executionID, readErr)
+		} else if json.Valid(outputData) {
+			result.Output = json.RawMessage(outputData)
+		} else {
+			log.Printf("runner: output.json for execution %s is not valid JSON", executionID)
+		}
+	} else {
+		// Log only if it is not a simple "file not found" (e.g. 404).
+		if !strings.Contains(dlErr.Error(), "404") {
+			log.Printf("runner: failed to download output.json for execution %s: %v", executionID, dlErr)
+		}
+	}
+
+	// Step 12: Search for artifact files.
+	if r.artifacts != nil {
+		artifactFiles, searchErr := r.sandbox.SearchFiles(execCtx, execdURL, "/sandbox/out/files", "*")
+		if searchErr != nil {
+			log.Printf("runner: failed to search artifacts for %s: %v", executionID, searchErr)
+		} else if len(artifactFiles) > 0 {
+			// Download artifact files to a temp directory for the collector.
+			tmpDir, collectErr := downloadArtifacts(execCtx, r.sandbox, execdURL, artifactFiles)
 			if collectErr != nil {
-				log.Printf("runner: failed to collect artifacts for %s: %v", executionID, collectErr)
+				log.Printf("runner: failed to download artifacts for %s: %v", executionID, collectErr)
 			} else {
-				result.FilesURL = artifactURL
-				result.FilesList = filesList
+				defer func() {
+					if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+						log.Printf("runner: failed to remove artifact tmpdir %s: %v", tmpDir, removeErr)
+					}
+				}()
+
+				artifactURL, filesList, uploadErr := r.artifacts.Collect(ctx, req.TenantID, executionID, tmpDir)
+				if uploadErr != nil {
+					log.Printf("runner: failed to collect artifacts for %s: %v", executionID, uploadErr)
+				} else {
+					result.FilesURL = artifactURL
+					result.FilesList = filesList
+
+					// Create file records in the database for each collected artifact.
+					for _, fileName := range filesList {
+						s3Key := fmt.Sprintf("%s/%s/%s", req.TenantID, executionID, fileName)
+						fileRecord := &store.File{
+							TenantID:    req.TenantID,
+							ExecutionID: executionID,
+							Name:        fileName,
+							ContentType: detectRunnerContentType(fileName),
+							S3Key:       s3Key,
+							Version:     1,
+						}
+						if _, createErr := r.store.CreateFile(ctx, fileRecord); createErr != nil {
+							log.Printf("runner: failed to create file record for %s: %v", fileName, createErr)
+						}
+					}
+				}
 			}
 		}
 	}
 
 	// Determine final status based on exit code.
-	if exitCode == 0 {
+	if cmdResult.ExitCode == 0 {
 		result.Status = "success"
 	} else {
 		result.Status = "failed"
 		if result.Error == nil {
-			result.setError(fmt.Sprintf("container exited with code %d", exitCode))
+			msg := fmt.Sprintf("command exited with code %d", cmdResult.ExitCode)
+			if cmdResult.Error != "" {
+				msg = cmdResult.Error
+			}
+			result.setError(msg)
 		}
 	}
 
 	return result, nil
 }
 
-// buildSandboxTar creates a single tar archive containing the entire
-// /sandbox directory tree that will be extracted at "/" in the container:
-//
-//	sandbox/                     (dir)
-//	sandbox/scripts/...          (skill files from skillDir)
-//	sandbox/input.json           (input data)
-//	sandbox/out/                 (dir, writable)
-//	sandbox/out/files/           (dir, writable)
-//	sandbox/out/output.json      (will be created by the skill)
-func buildSandboxTar(skillDir string, inputJSON []byte) (io.Reader, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+// pollExecD polls the ExecD health endpoint at the given interval until it
+// responds successfully or the overall timeout is reached.
+func pollExecD(ctx context.Context, client *sandbox.Client, execdURL string, interval, timeout time.Duration) error {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-	// Helper to add a directory entry.
-	addDir := func(name string, mode int64) error {
-		return tw.WriteHeader(&tar.Header{
-			Name:     name,
-			Typeflag: tar.TypeDir,
-			Mode:     mode,
-		})
+	// Try immediately first.
+	if err := client.Ping(ctx, execdURL); err == nil {
+		return nil
 	}
 
-	// Create the directory structure.
-	for _, d := range []string{"sandbox/", "sandbox/scripts/", "sandbox/out/", "sandbox/out/files/"} {
-		if err := addDir(d, 0o777); err != nil {
-			return nil, fmt.Errorf("adding dir %s: %w", d, err)
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for execd: %w", ctx.Err())
+		case <-deadline:
+			return fmt.Errorf("execd did not become ready within %s", timeout)
+		case <-ticker.C:
+			if err := client.Ping(ctx, execdURL); err == nil {
+				return nil
+			}
 		}
 	}
+}
 
-	// Walk the skill directory and add all files under sandbox/scripts/.
+// buildUploadFiles walks the extracted skill directory and builds the list
+// of files to upload to the sandbox via ExecD. It places skill files under
+// /sandbox/scripts/ and adds the input.json at /sandbox/input.json. It also
+// creates the output directories via placeholder files.
+func buildUploadFiles(skillDir string, inputJSON []byte) ([]sandbox.FileUpload, error) {
+	var files []sandbox.FileUpload
+
+	// Walk the skill directory and add all files under /sandbox/scripts/.
 	if err := filepath.Walk(skillDir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -410,219 +429,145 @@ func buildSandboxTar(skillDir string, inputJSON []byte) (io.Reader, error) {
 		if rel == "." {
 			return nil
 		}
-
-		tarName := "sandbox/scripts/" + filepath.ToSlash(rel)
+		// Skip directories; ExecD creates intermediate directories on upload.
 		if info.IsDir() {
-			return tw.WriteHeader(&tar.Header{
-				Name:     tarName + "/",
-				Typeflag: tar.TypeDir,
-				Mode:     0o755,
-			})
+			return nil
 		}
 
-		header, headerErr := tar.FileInfoHeader(info, "")
-		if headerErr != nil {
-			return headerErr
+		remotePath := "/sandbox/scripts/" + filepath.ToSlash(rel)
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("reading %s: %w", path, readErr)
 		}
-		header.Name = tarName
 
-		if writeErr := tw.WriteHeader(header); writeErr != nil {
-			return writeErr
+		// Preserve execute permission for script files.
+		mode := int(info.Mode().Perm())
+		if mode == 0 {
+			mode = 0o644
 		}
-		f, openErr := os.Open(path)
-		if openErr != nil {
-			return openErr
-		}
-		defer f.Close()
-		_, cpErr := io.Copy(tw, f)
-		return cpErr
+
+		files = append(files, sandbox.FileUpload{
+			Path:    remotePath,
+			Content: content,
+			Mode:    mode,
+		})
+		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("adding skill files: %w", err)
+		return nil, fmt.Errorf("walking skill directory: %w", err)
 	}
 
 	// Add input.json.
-	if err := tw.WriteHeader(&tar.Header{
-		Name: "sandbox/input.json",
-		Mode: 0o644,
-		Size: int64(len(inputJSON)),
-	}); err != nil {
-		return nil, fmt.Errorf("adding input.json header: %w", err)
-	}
-	if _, err := tw.Write(inputJSON); err != nil {
-		return nil, fmt.Errorf("writing input.json: %w", err)
-	}
+	files = append(files, sandbox.FileUpload{
+		Path:    "/sandbox/input.json",
+		Content: inputJSON,
+		Mode:    0o644,
+	})
 
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return &buf, nil
+	// Add placeholder files so that output directories exist.
+	files = append(files, sandbox.FileUpload{
+		Path:    "/sandbox/out/.keep",
+		Content: []byte{},
+		Mode:    0o644,
+	})
+	files = append(files, sandbox.FileUpload{
+		Path:    "/sandbox/out/files/.keep",
+		Content: []byte{},
+		Mode:    0o644,
+	})
+
+	return files, nil
 }
 
-// copyFromContainer copies a path from the container to a temporary directory
-// on the local filesystem and returns the temp directory path.
-func (r *Runner) copyFromContainer(ctx context.Context, containerID, containerPath string) (string, error) {
-	reader, _, err := r.docker.CopyFromContainer(ctx, containerID, containerPath)
+// downloadArtifacts downloads the listed artifact files from the sandbox
+// into a local temporary directory and returns its path.
+func downloadArtifacts(ctx context.Context, client *sandbox.Client, execdURL string, entries []sandbox.FileInfo) (string, error) {
+	tmpDir, err := os.MkdirTemp("", "skillbox-artifacts-*")
 	if err != nil {
-		return "", fmt.Errorf("copy from container: %w", err)
-	}
-	defer reader.Close()
-
-	tmpDir, err := os.MkdirTemp("", "skillbox-out-*")
-	if err != nil {
-		return "", fmt.Errorf("creating temp dir: %w", err)
+		return "", fmt.Errorf("creating temp dir for artifacts: %w", err)
 	}
 
-	tr := tar.NewReader(reader)
-	for {
-		header, tarErr := tr.Next()
-		if tarErr == io.EOF {
-			break
-		}
-		if tarErr != nil {
+	success := false
+	defer func() {
+		if !success {
 			_ = os.RemoveAll(tmpDir)
-			return "", fmt.Errorf("reading tar: %w", tarErr)
+		}
+	}()
+
+	for _, entry := range entries {
+		// Compute a safe relative path under the temp directory.
+		// The entry.Path is the full path inside the sandbox, e.g.
+		// /sandbox/out/files/report.pdf. We take just the filename
+		// portion relative to the search directory.
+		rel := filepath.Base(entry.Path)
+		if strings.Contains(entry.Path, "/sandbox/out/files/") {
+			rel = strings.TrimPrefix(entry.Path, "/sandbox/out/files/")
 		}
 
-		target := filepath.Join(tmpDir, filepath.FromSlash(header.Name))
-
-		// Guard against path traversal.
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(tmpDir)+string(filepath.Separator)) &&
-			filepath.Clean(target) != filepath.Clean(tmpDir) {
+		// Skip placeholder files.
+		if rel == ".keep" {
 			continue
 		}
 
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if mkErr := os.MkdirAll(target, 0o750); mkErr != nil {
-				_ = os.RemoveAll(tmpDir)
-				return "", mkErr
-			}
-		case tar.TypeReg:
-			if mkErr := os.MkdirAll(filepath.Dir(target), 0o750); mkErr != nil {
-				_ = os.RemoveAll(tmpDir)
-				return "", mkErr
-			}
-			f, createErr := os.Create(target)
-			if createErr != nil {
-				_ = os.RemoveAll(tmpDir)
-				return "", createErr
-			}
-			if _, cpErr := io.Copy(f, io.LimitReader(tr, 512<<20)); cpErr != nil { // 512 MiB per-file limit
-				_ = f.Close()
-				_ = os.RemoveAll(tmpDir)
-				return "", cpErr
-			}
-			_ = f.Close()
+		// Guard against path traversal.
+		if strings.Contains(rel, "..") {
+			continue
+		}
+
+		localPath := filepath.Join(tmpDir, filepath.FromSlash(rel))
+
+		// Ensure parent directory exists.
+		if mkErr := os.MkdirAll(filepath.Dir(localPath), 0o750); mkErr != nil {
+			return "", fmt.Errorf("creating dir for %s: %w", rel, mkErr)
+		}
+
+		rc, dlErr := client.DownloadFile(ctx, execdURL, entry.Path)
+		if dlErr != nil {
+			return "", fmt.Errorf("downloading artifact %s: %w", entry.Path, dlErr)
+		}
+
+		data, readErr := io.ReadAll(io.LimitReader(rc, 512<<20)) // 512 MiB per-file limit
+		rc.Close()
+		if readErr != nil {
+			return "", fmt.Errorf("reading artifact %s: %w", entry.Path, readErr)
+		}
+
+		if writeErr := os.WriteFile(localPath, data, 0o644); writeErr != nil {
+			return "", fmt.Errorf("writing artifact %s: %w", localPath, writeErr)
 		}
 	}
 
+	success = true
 	return tmpDir, nil
 }
 
-// buildCommand constructs the shell command to run inside the container
-// based on the skill's language and whether dependency files are present.
-func buildCommand(loaded *registry.LoadedSkill) []string {
+// buildShellCommand constructs the shell command string to run inside the
+// sandbox based on the skill's language and whether dependency files are present.
+func buildShellCommand(loaded *registry.LoadedSkill) string {
 	entrypoint := "/sandbox/scripts/" + loaded.Entrypoint
 	lang := loaded.Skill.Lang
 
 	switch lang {
 	case "python":
 		if loaded.HasRequirements {
-			// Install dependencies to a temp directory, then run the script
-			// with PYTHONPATH set so imports resolve correctly.
-			return []string{
-				"sh", "-c",
-				fmt.Sprintf(
-					"pip install --no-cache-dir -r /sandbox/scripts/requirements.txt -t /tmp/deps && PYTHONPATH=/tmp/deps python %s",
-					entrypoint,
-				),
-			}
+			return fmt.Sprintf(
+				"pip install --no-cache-dir -r /sandbox/scripts/requirements.txt -t /tmp/deps && PYTHONPATH=/tmp/deps python %s",
+				entrypoint,
+			)
 		}
-		return []string{"python", entrypoint}
+		return fmt.Sprintf("python %s", entrypoint)
 
 	case "node", "nodejs", "javascript":
-		return []string{"node", entrypoint}
+		return fmt.Sprintf("node %s", entrypoint)
 
 	case "bash":
-		return []string{"bash", entrypoint}
+		return fmt.Sprintf("bash %s", entrypoint)
 
 	case "shell", "sh":
-		return []string{"sh", entrypoint}
+		return fmt.Sprintf("sh %s", entrypoint)
 
 	default:
-		// Fallback: try to run directly.
-		return []string{entrypoint}
+		return entrypoint
 	}
-}
-
-// collectLogs reads stdout and stderr from a container and returns the
-// combined output as a string, truncated to maxSize bytes.
-func collectLogs(docker *client.Client, containerID string, maxSize int64) string {
-	logCtx, logCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer logCancel()
-
-	reader, err := docker.ContainerLogs(logCtx, containerID, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Timestamps: false,
-	})
-	if err != nil {
-		log.Printf("runner: failed to read logs for container %s: %v", shortID(containerID), err)
-		return ""
-	}
-	defer reader.Close()
-
-	var buf bytes.Buffer
-	// Docker multiplexes stdout/stderr with an 8-byte header per frame.
-	// We use io.Copy with a LimitReader to cap the total size.
-	if _, cpErr := io.Copy(&buf, io.LimitReader(reader, maxSize)); cpErr != nil {
-		log.Printf("runner: error reading logs for container %s: %v", shortID(containerID), cpErr)
-	}
-
-	return stripDockerLogHeaders(buf.Bytes())
-}
-
-// stripDockerLogHeaders removes Docker's 8-byte multiplexing headers from
-// container log output. Each frame starts with [stream_type(1)][0(3)][size(4)]
-// followed by the payload. If the data does not appear to have headers, it
-// is returned as-is.
-func stripDockerLogHeaders(data []byte) string {
-	if len(data) == 0 {
-		return ""
-	}
-
-	var cleaned strings.Builder
-	cleaned.Grow(len(data))
-
-	pos := 0
-	for pos < len(data) {
-		// Need at least 8 bytes for the header.
-		if pos+8 > len(data) {
-			// Write remaining bytes as-is.
-			cleaned.Write(data[pos:])
-			break
-		}
-
-		// Check if this looks like a Docker log header.
-		// Stream types: 0=stdin, 1=stdout, 2=stderr.
-		streamType := data[pos]
-		if (streamType == 0 || streamType == 1 || streamType == 2) &&
-			data[pos+1] == 0 && data[pos+2] == 0 && data[pos+3] == 0 {
-			// Read the payload size (big-endian uint32).
-			size := int(data[pos+4])<<24 | int(data[pos+5])<<16 | int(data[pos+6])<<8 | int(data[pos+7])
-			pos += 8
-
-			end := min(pos+size, len(data))
-			cleaned.Write(data[pos:end])
-			pos = end
-		} else {
-			// Not a Docker header; write byte and advance.
-			cleaned.WriteByte(data[pos])
-			pos++
-		}
-	}
-
-	return cleaned.String()
 }
 
 // blockedEnvVars lists environment variable names that callers may not
@@ -647,10 +592,61 @@ func isBlockedEnvVar(key string) bool {
 	return strings.HasPrefix(upper, "SANDBOX_") || strings.HasPrefix(upper, "SKILL_")
 }
 
-// shortID returns the first 12 characters of a container ID for log output.
+// shortID returns the first 12 characters of an ID for log output.
 func shortID(id string) string {
 	if len(id) > 12 {
 		return id[:12]
 	}
 	return id
+}
+
+// truncateString truncates s to at most maxBytes bytes.
+func truncateString(s string, maxBytes int64) string {
+	if int64(len(s)) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes]
+}
+
+// detectRunnerContentType returns a MIME type based on the file extension.
+func detectRunnerContentType(name string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".json"):
+		return "application/json"
+	case strings.HasSuffix(lower, ".csv"):
+		return "text/csv"
+	case strings.HasSuffix(lower, ".txt"), strings.HasSuffix(lower, ".log"):
+		return "text/plain"
+	case strings.HasSuffix(lower, ".html"), strings.HasSuffix(lower, ".htm"):
+		return "text/html"
+	case strings.HasSuffix(lower, ".xml"):
+		return "application/xml"
+	case strings.HasSuffix(lower, ".pdf"):
+		return "application/pdf"
+	case strings.HasSuffix(lower, ".png"):
+		return "image/png"
+	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"):
+		return "image/jpeg"
+	case strings.HasSuffix(lower, ".gif"):
+		return "image/gif"
+	case strings.HasSuffix(lower, ".svg"):
+		return "image/svg+xml"
+	case strings.HasSuffix(lower, ".zip"):
+		return "application/zip"
+	case strings.HasSuffix(lower, ".tar"):
+		return "application/x-tar"
+	case strings.HasSuffix(lower, ".gz"), strings.HasSuffix(lower, ".tgz"):
+		return "application/gzip"
+	case strings.HasSuffix(lower, ".py"):
+		return "text/x-python"
+	case strings.HasSuffix(lower, ".js"):
+		return "application/javascript"
+	case strings.HasSuffix(lower, ".yaml"), strings.HasSuffix(lower, ".yml"):
+		return "application/x-yaml"
+	case strings.HasSuffix(lower, ".md"):
+		return "text/markdown"
+	default:
+		return "application/octet-stream"
+	}
 }

@@ -35,8 +35,6 @@ spec:
             - configMapRef:
                 name: {{ include "skillbox.fullname" . }}
           env:
-            - name: SKILLBOX_DOCKER_HOST
-              value: "tcp://localhost:2375"
             - name: SKILLBOX_DB_DSN
               valueFrom:
                 secretKeyRef:
@@ -52,6 +50,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "skillbox.fullname" . }}
                   key: SKILLBOX_S3_SECRET_KEY
+            - name: SKILLBOX_OPENSANDBOX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skillbox.fullname" . }}
+                  key: SKILLBOX_OPENSANDBOX_API_KEY
             {{- if .Values.redis.enabled }}
             - name: SKILLBOX_REDIS_URL
               valueFrom:
@@ -84,48 +87,7 @@ spec:
             - name: tmp
               mountPath: /tmp
 
-        # --- Docker Socket Proxy Sidecar ---
-        # Runs as root to access the Docker socket on the host.
-        - name: docker-proxy
-          image: {{ .Values.dockerProxy.image }}
-          ports:
-            - containerPort: 2375
-              name: docker
-              protocol: TCP
-          securityContext:
-            runAsNonRoot: false
-            runAsUser: 0
-          env:
-            - { name: CONTAINERS,  value: "1" }
-            - { name: IMAGES,      value: "1" }
-            - { name: POST,        value: "1" }
-            - { name: DELETE,      value: "1" }
-            - { name: ALLOW_START, value: "1" }
-            - { name: ALLOW_STOP,  value: "1" }
-            - { name: AUTH,        value: "0" }
-            - { name: SECRETS,     value: "0" }
-            - { name: EXEC,        value: "0" }
-            - { name: BUILD,       value: "0" }
-            - { name: COMMIT,      value: "0" }
-            - { name: NETWORKS,    value: "0" }
-            - { name: VOLUMES,     value: "0" }
-            - { name: SWARM,       value: "0" }
-            - { name: NODES,       value: "0" }
-            - { name: SERVICES,    value: "0" }
-            - { name: TASKS,       value: "0" }
-            - { name: PLUGINS,     value: "0" }
-            - { name: SYSTEM,      value: "0" }
-          resources:
-            {{- toYaml .Values.dockerProxy.resources | nindent 12 }}
-          volumeMounts:
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
-
       volumes:
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
         - name: tmp
           emptyDir:
             sizeLimit: 100Mi

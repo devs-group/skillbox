@@ -30,7 +30,7 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 | **"Three teams built three sandbox wrappers"** | One runtime. One API. One security review. |
 | **"Our agents don't know what tools are available"** | Skill catalog — agents discover, inspect, and choose capabilities. |
 | **"We need GDPR/EU AI Act compliance"** | Data never leaves your network. MIT license. |
-| **"Docker is insecure for running untrusted code"** | 11 layers of hardening, enforced by the runtime, not configurable by callers. |
+| **"Docker is insecure for running untrusted code"** | OpenSandbox with 11 layers of hardening, enforced by the runtime, not configurable by callers. |
 
 ### Compared to Alternatives
 
@@ -43,27 +43,29 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 | LangChain-native | **1:1 tool mapping** | Manual | Manual | Manual |
 | Network disabled | **Always** | Optional | No | No |
 | Zero-dep SDK | **Go + Python** | Python | Python | REST only |
+| File management | **Upload, version, download** | Limited | No | No |
 | License | **MIT** | Apache-2.0 | Proprietary | Apache-2.0 |
 
 ## Features
 
-- **Secure by default** — Network disabled, all capabilities dropped, read-only rootfs, PID limits, non-root user, no-new-privileges, image allowlist, socket proxy. 11 layers. Not optional.
+- **Secure by default** — OpenSandbox isolation with network disabled, all capabilities dropped, read-only rootfs, PID limits, non-root user, no-new-privileges, image allowlist. 11 layers. Not optional.
 - **Skill catalog** — Skills are versioned, discoverable, introspectable units with YAML metadata + markdown instructions. Agents understand what's available before executing.
 - **Structured I/O** — Skills read JSON input, write JSON output, and produce file artifacts. No stdout parsing.
 - **LangChain-ready** — Skills map 1:1 to LangChain tools. `get_skill` returns descriptions for tool selection.
-- **Self-hosted** — Docker Compose (dev), Kubernetes (prod), Helm chart. Air-gapped? Works offline.
+- **Self-hosted** — Docker Compose with OpenSandbox service (dev), Kubernetes (prod), Helm chart. Air-gapped? Works offline.
 - **Multi-tenant** — API keys scoped to tenants, skills and executions isolated.
 - **Zero-dep SDKs** — Go and Python clients use only the standard library. No dependency conflicts.
 - **CLI** — Push, lint, run, package, and manage skills from the terminal.
 - **File artifacts** — Skills write files, runtime tars them, presigned S3 URL returned.
+- **File persistence** — Files persist across sessions, support versioning, and can be edited after creation via the file management API.
 - **12-factor config** — All configuration via environment variables.
 
 ## Quick Start
 
-**Prerequisites:** Docker and Docker Compose.
+**Prerequisites:** Docker and Docker Compose. The compose stack includes the OpenSandbox service for sandbox execution.
 
 ```bash
-# 1. Start the stack
+# 1. Start the stack (includes OpenSandbox, MinIO, PostgreSQL)
 git clone https://github.com/devs-group/skillbox.git && cd skillbox
 docker compose -f deploy/docker/docker-compose.yml up -d
 
@@ -94,17 +96,17 @@ Security is enforced by the runtime — **not configurable away by callers**:
 
 | Control | Implementation | Threat Mitigated |
 |---|---|---|
-| Network isolation | `NetworkMode: none` | Data exfiltration, SSRF |
-| Capability drop | `CapDrop: ["ALL"]` | Privilege escalation |
-| Read-only rootfs | `ReadonlyRootfs: true` | Filesystem tampering |
-| PID limit | `PidsLimit: 128` | Fork bombs |
-| No-new-privileges | `no-new-privileges:true` | setuid/setgid escalation |
-| Non-root user | `User: 65534:65534` | Container escape |
-| Socket proxy | tecnativa/docker-socket-proxy | Host escape via Docker socket |
-| Image allowlist | Checked before ContainerCreate | Supply-chain attack |
-| Timeout | Go context cancellation | Resource exhaustion |
-| tmpfs noexec | `/tmp`, `/root` as noexec | Binary execution in writable areas |
-| Env var blocking | `LD_PRELOAD`, `PYTHONPATH` blocked | Library injection |
+| Network isolation | OpenSandbox NetworkPolicy (`defaultAction: deny`) | Data exfiltration, SSRF |
+| Capability drop | OpenSandbox container security context | Privilege escalation |
+| Read-only rootfs | OpenSandbox container config | Filesystem tampering |
+| PID limit | OpenSandbox resource limits | Fork bombs |
+| No-new-privileges | OpenSandbox security context | setuid/setgid escalation |
+| Non-root user | `UID 65534:65534` (set by runner) | Container escape |
+| Image allowlist | Validated by Skillbox before `CreateSandbox` call | Supply-chain attack |
+| Timeout | Go context cancellation + sandbox TTL | Resource exhaustion |
+| tmpfs | OpenSandbox mounts | Binary execution in writable areas |
+| Env var blocking | Filtered by runner before passing to sandbox | Library injection |
+| Sandbox lifecycle | OpenSandbox API (no Docker socket required) | Host escape |
 
 For genuinely untrusted code, gVisor or Kata Containers can be enabled as a Kubernetes RuntimeClass with zero changes to Skillbox.
 
@@ -166,6 +168,10 @@ result, err := client.Run(ctx, skillbox.RunRequest{
 if result.HasFiles() {
     err = client.DownloadFiles(ctx, result, "./output")
 }
+
+// File management
+files, err := client.ListFiles(ctx, skillbox.FileFilter{ExecutionID: "exec-abc-123"})
+err = client.DownloadFile(ctx, files[0].ID, "./output/report.pdf")
 ```
 
 ### Python
@@ -182,6 +188,10 @@ print(result.output)  # {"summary": "...", "sentence_count": 2}
 
 if result.has_files:
     client.download_files(result, "./output")
+
+# File management
+files = client.list_files(execution_id="exec-abc-123")
+client.download_file(files[0].id, "./output/report.pdf")
 ```
 
 ## LangChain Integration
@@ -208,12 +218,12 @@ See the [full LangChain integration guide](docs/API.md) for `SkillboxTool`, `Ski
 ## Architecture
 
 ```
-Agent → REST API → Skill Registry (MinIO) → Docker Runner → Container (sandboxed) → Output + Files
-              ↕                                     ↕
-         PostgreSQL                        Socket Proxy → Docker Daemon
+Agent → REST API → Skill Registry (MinIO) → OpenSandbox Runner → Sandbox (hardened) → Output + Files
+              ↕                                      ↕
+         PostgreSQL                         OpenSandbox API (lifecycle + ExecD)
 ```
 
-Every execution: authenticate → load skill → validate image → create hardened container → run → collect output + files → cleanup. Stateless API, horizontally scalable behind a load balancer.
+Every execution: authenticate → load skill → validate image → create hardened sandbox via OpenSandbox → run → collect output + files → cleanup. Stateless API, horizontally scalable behind a load balancer.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full deep-dive.
 
@@ -250,7 +260,7 @@ kubectl apply -k deploy/k8s/overlays/prod
 helm install skillbox deploy/helm/skillbox/
 ```
 
-Kustomize overlays for dev and prod environments. Includes namespace, RBAC, NetworkPolicy, and Pod Security Standards.
+Kustomize overlays for dev and prod environments. Includes namespace, RBAC, NetworkPolicy, and Pod Security Standards. OpenSandbox manages container lifecycle directly -- no Docker socket proxy required.
 
 ## API
 
@@ -263,6 +273,13 @@ Kustomize overlays for dev and prod environments. Includes namespace, RBAC, Netw
 | GET | /v1/skills | List skills (with descriptions) |
 | GET | /v1/skills/:name/:version | Get skill metadata + instructions |
 | DELETE | /v1/skills/:name/:version | Delete a skill |
+| POST | /v1/files | Upload a file |
+| GET | /v1/files | List files (with pagination) |
+| GET | /v1/files/:id | Get file metadata |
+| GET | /v1/files/:id/download | Download file content |
+| PUT | /v1/files/:id | Update/version a file |
+| DELETE | /v1/files/:id | Delete a file |
+| GET | /v1/files/:id/versions | List file versions |
 | GET | /health | Liveness probe |
 | GET | /ready | Readiness probe |
 
@@ -296,7 +313,9 @@ All configuration via environment variables (12-factor):
 | `SKILLBOX_S3_ENDPOINT` | *required* | MinIO/S3 endpoint |
 | `SKILLBOX_S3_ACCESS_KEY` | *required* | S3 access key |
 | `SKILLBOX_S3_SECRET_KEY` | *required* | S3 secret key |
-| `SKILLBOX_DOCKER_HOST` | tcp://localhost:2375 | Docker socket proxy address |
+| `SKILLBOX_OPENSANDBOX_URL` | http://localhost:8080 | OpenSandbox API URL |
+| `SKILLBOX_OPENSANDBOX_API_KEY` | *required* | OpenSandbox API key |
+| `SKILLBOX_SANDBOX_EXPIRATION` | 5m | Sandbox TTL |
 | `SKILLBOX_IMAGE_ALLOWLIST` | python:3.12-slim,... | Allowed Docker images |
 | `SKILLBOX_DEFAULT_TIMEOUT` | 120s | Default execution timeout |
 | `SKILLBOX_API_PORT` | 8080 | HTTP port |

@@ -14,3 +14,5 @@ data:
   SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
   SKILLBOX_S3_BUCKET_SKILLS: "skills"
   SKILLBOX_S3_BUCKET_EXECUTIONS: "executions"
+  SKILLBOX_OPENSANDBOX_URL: "http://opensandbox:8080"
+  SKILLBOX_SANDBOX_EXPIRATION: "5m"

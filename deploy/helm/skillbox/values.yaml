@@ -25,6 +25,12 @@ redis:
   enabled: false
   url: ""
 
+# -- OpenSandbox connection (required)
+opensandbox:
+  url: "http://opensandbox:8080"
+  apiKey: ""
+  expiration: "5m"
+
 # -- Skillbox runtime settings
 config:
   logLevel: "info"
@@ -42,17 +48,6 @@ resources:
   limits:
     cpu: "1"
     memory: 512Mi
-
-# -- Docker socket proxy sidecar resources
-dockerProxy:
-  image: tecnativa/docker-socket-proxy:latest
-  resources:
-    requests:
-      cpu: 50m
-      memory: 32Mi
-    limits:
-      cpu: 200m
-      memory: 64Mi
 
 # -- Service type
 service:

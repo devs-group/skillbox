@@ -9,13 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/client"
-
 	"github.com/devs-group/skillbox/internal/api"
 	"github.com/devs-group/skillbox/internal/artifacts"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
+	"github.com/devs-group/skillbox/internal/sandbox"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -66,27 +65,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize Docker client
-	dockerClient, err := client.NewClientWithOpts(
-		client.WithHost(cfg.DockerHost),
-		client.WithAPIVersionNegotiation(),
-	)
-	if err != nil {
-		slog.Error("failed to create docker client", "error", err)
-		os.Exit(1)
-	}
-	defer dockerClient.Close()
+	// Initialize OpenSandbox client
+	sbClient := sandbox.New(cfg.OpenSandboxURL, cfg.OpenSandboxAPIKey, nil)
 
-	// Clean up orphaned containers from previous runs
-	if err := runner.CleanupOrphans(context.Background(), dockerClient); err != nil {
+	// Clean up orphaned sandboxes from previous runs
+	if err := runner.CleanupOrphans(context.Background(), sbClient); err != nil {
 		slog.Warn("orphan cleanup failed", "error", err)
 	}
 
 	// Initialize runner
-	r := runner.New(cfg, dockerClient, reg, db, collector)
+	r := runner.New(cfg, sbClient, reg, db, collector)
 
 	// Build router
-	router := api.NewRouter(cfg, db, r, reg)
+	router := api.NewRouter(cfg, db, r, reg, collector)
 
 	// Create HTTP server
 	srv := &http.Server{
