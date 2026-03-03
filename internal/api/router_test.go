@@ -77,7 +77,7 @@ func setupRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock, func()) {
 	// file route registration when no collector is provided.
 	router := NewRouter(cfg, st, nil, nil)
 
-	return router, mock, func() { db.Close() }
+	return router, mock, func() { db.Close() } //nolint:errcheck
 }
 
 
@@ -484,7 +484,7 @@ func newFilesRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock, func()) {
 	}
 	s := store.NewWithDB(db)
 	router := buildFilesRouter(s)
-	return router, mock, func() { db.Close() }
+	return router, mock, func() { db.Close() } //nolint:errcheck
 }
 
 // authRequest creates an *http.Request with a valid Bearer token header.

@@ -33,7 +33,7 @@ func newTestFilesHandler(t *testing.T) (*FilesHandler, sqlmock.Sqlmock, func()) 
 	}
 	st := store.NewWithDB(db)
 	h := NewFilesHandler(st, nil)
-	return h, mock, func() { db.Close() }
+	return h, mock, func() { db.Close() } //nolint:errcheck
 }
 
 // setTenantID injects the tenant_id into the Gin context the same way

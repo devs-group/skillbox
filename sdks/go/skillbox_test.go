@@ -242,7 +242,7 @@ func TestRun_Timeout(t *testing.T) {
 	}))
 	defer func() {
 		close(gate) // unblock any lingering handler goroutines
-		srv.Close()
+		srv.Close() //nolint:errcheck
 	}()
 
 	client := New(srv.URL, "sk-test")
