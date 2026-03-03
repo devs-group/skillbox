@@ -8,8 +8,8 @@ const features = [
   },
   {
     icon: Boxes,
-    title: "Skill catalog",
-    description: "Skills are versioned, discoverable, introspectable units with YAML metadata + markdown instructions. Agents understand what's available before executing.",
+    title: "Skills registry",
+    description: "Push skills like you push packages — versioned, discoverable, introspectable. Agents browse the registry, inspect capabilities, and choose the right skill before executing. Think npm, but for agent capabilities.",
   },
   {
     icon: Braces,

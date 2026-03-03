@@ -36,13 +36,14 @@ export function Hero() {
         <h1 className="text-center text-4xl md:text-6xl lg:text-7xl font-bold tracking-tight text-balance leading-[1.1]">
           <span className="text-foreground">The execution runtime</span>
           <br />
-          <span className="text-foreground">for </span>
-          <span className="text-primary">AI agents</span>
+          <span className="text-foreground">and </span>
+          <span className="text-primary">skills registry</span>
+          <span className="text-foreground"> for AI agents</span>
         </h1>
 
         {/* Subheadline */}
         <p className="mx-auto mt-6 max-w-2xl text-center text-lg md:text-xl text-muted-foreground text-pretty leading-relaxed">
-          Your agents need a sandbox. Don{"'"}t build one. Skillbox gives AI agents a single API to run sandboxed scripts and receive structured JSON output. Self-hosted, open source, secure by default.
+          Your agents need a sandbox. Don{"'"}t build one. Skillbox gives AI agents a single API to register, discover, and execute sandboxed skills — like a package registry for agent capabilities. Self-hosted, open source, secure by default.
         </p>
 
         {/* CTAs */}

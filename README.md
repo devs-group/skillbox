@@ -1,10 +1,10 @@
 # Skillbox
 
-**The self-hosted execution runtime for AI agents.**
+**The self-hosted execution runtime and skills registry for AI agents.**
 
 > Your agents need a sandbox. Don't build one.
 
-Skillbox gives AI agents a single API to run sandboxed skill scripts (Python, Node.js, Bash) and receive structured JSON output + file artifacts. Self-hosted, open source, secure by default.
+Skillbox gives AI agents a single API to **register, discover, and execute** sandboxed skill scripts (Python, Node.js, Bash) and receive structured JSON output + file artifacts. Think of it as a package registry — but for agent capabilities. Push skills, version them, let agents browse what's available, and run them in hardened sandboxes. Self-hosted, open source, secure by default.
 
 ```python
 from skillbox import Client
@@ -28,7 +28,7 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 |---|---|
 | **"We need sandboxing but E2B/Modal are cloud-only"** | Self-hosted. Your infrastructure, your data, your rules. |
 | **"Three teams built three sandbox wrappers"** | One runtime. One API. One security review. |
-| **"Our agents don't know what tools are available"** | Skill catalog — agents discover, inspect, and choose capabilities. |
+| **"Our agents don't know what tools are available"** | Skills registry — agents discover, inspect, and choose capabilities like browsing a package index. |
 | **"We need GDPR/EU AI Act compliance"** | Data never leaves your network. MIT license. |
 | **"Docker is insecure for running untrusted code"** | [OpenSandbox](https://github.com/alibaba/OpenSandbox) with 6 layers of hardening enforced by the runtime, not configurable by callers. |
 
@@ -37,7 +37,7 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 | | Skillbox | E2B | Modal | Daytona |
 |---|---|---|---|---|
 | Self-hosted | **Yes (MIT)** | Experimental | No | Limited |
-| Skill catalog | **Yes (SKILL.md)** | No | No | No |
+| Skills registry | **Yes (SKILL.md)** | No | No | No |
 | Structured I/O | **JSON in → JSON out** | Raw stdout | Raw stdout | Raw stdout |
 | Agent introspection | **list + get_skill** | No | No | No |
 | LangChain-native | **1:1 tool mapping** | Manual | Manual | Manual |
@@ -49,7 +49,7 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 ## Features
 
 - **Secure by default** — [OpenSandbox](https://github.com/alibaba/OpenSandbox) isolation with network disabled, resource limits enforced, image allowlist, timeout enforcement, env var blocking, and API-based lifecycle (no Docker socket). 6 layers, all mandatory.
-- **Skill catalog** — Skills are versioned, discoverable, introspectable units with YAML metadata + markdown instructions. Agents understand what's available before executing.
+- **Skills registry** — Skillbox is a registry for agent capabilities. Push skills like you push packages — versioned, discoverable, introspectable units with YAML metadata + markdown instructions. Agents browse, inspect, and choose the right skill before executing.
 - **Structured I/O** — Skills read JSON input, write JSON output, and produce file artifacts. No stdout parsing.
 - **LangChain-ready** — Skills map 1:1 to LangChain tools. `get_skill` returns descriptions for tool selection.
 - **Self-hosted** — Docker Compose with [OpenSandbox](https://github.com/alibaba/OpenSandbox) service (dev), Kubernetes (prod), Helm chart. Air-gapped? Works offline.
