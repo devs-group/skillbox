@@ -16,10 +16,11 @@ import (
 
 // createExecutionRequest is the JSON body for POST /v1/executions.
 type createExecutionRequest struct {
-	Skill   string            `json:"skill"`
-	Version string            `json:"version"`
-	Input   json.RawMessage   `json:"input"`
-	Env     map[string]string `json:"env"`
+	Skill      string            `json:"skill"`
+	Version    string            `json:"version"`
+	Input      json.RawMessage   `json:"input"`
+	Env        map[string]string `json:"env"`
+	InputFiles []string          `json:"input_files,omitempty"`
 }
 
 // CreateExecution handles POST /v1/executions.
@@ -56,11 +57,12 @@ func CreateExecution(r *runner.Runner) gin.HandlerFunc {
 		tenantID := middleware.GetTenantID(c)
 
 		result, err := r.Run(c.Request.Context(), runner.RunRequest{
-			Skill:    req.Skill,
-			Version:  req.Version,
-			Input:    req.Input,
-			Env:      req.Env,
-			TenantID: tenantID,
+			Skill:      req.Skill,
+			Version:    req.Version,
+			Input:      req.Input,
+			Env:        req.Env,
+			InputFiles: req.InputFiles,
+			TenantID:   tenantID,
 		})
 		if err != nil {
 			if errors.Is(err, runner.ErrSkillNotFound) {
