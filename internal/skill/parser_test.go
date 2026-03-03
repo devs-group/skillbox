@@ -120,17 +120,6 @@ Body text.
 			wantErr: "name is required",
 		},
 		{
-			name: "missing version",
-			input: `---
-name: my-skill
-description: Some skill
-lang: python
----
-Body text.
-`,
-			wantErr: "version is required",
-		},
-		{
 			name: "missing description",
 			input: `---
 name: my-skill
@@ -140,17 +129,6 @@ lang: python
 Body text.
 `,
 			wantErr: "description is required",
-		},
-		{
-			name: "missing lang",
-			input: `---
-name: my-skill
-version: 1.0.0
-description: Some skill
----
-Body text.
-`,
-			wantErr: "lang is required",
 		},
 		{
 			name: "invalid version format",
@@ -212,6 +190,7 @@ func TestDefaultImage(t *testing.T) {
 		{lang: "bash", image: "", wantImage: "bash:5"},
 		{lang: "python", image: "python:3.11-slim", wantImage: "python:3.11-slim"},
 		{lang: "node", image: "custom-node:latest", wantImage: "custom-node:latest"},
+		{lang: "", image: "", wantImage: "bash:5"},
 	}
 
 	for _, tt := range tests {
@@ -348,6 +327,62 @@ func TestParseVersionFormats(t *testing.T) {
 			_, err := ParseSkillMD(input)
 			if err == nil {
 				t.Errorf("version %q should be invalid, got no error", v)
+			}
+		})
+	}
+}
+
+func TestParseSkillWithoutVersion(t *testing.T) {
+	input := []byte(`---
+name: my-skill
+description: A skill without version
+lang: python
+---
+Body text.
+`)
+	s, err := ParseSkillMD(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Version != "0.0.0" {
+		t.Errorf("Version = %q, want %q", s.Version, "0.0.0")
+	}
+}
+
+func TestParseSkillWithoutLang(t *testing.T) {
+	input := []byte(`---
+name: my-skill
+description: A skill without lang
+---
+Body text.
+`)
+	s, err := ParseSkillMD(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Lang != "" {
+		t.Errorf("Lang = %q, want empty string", s.Lang)
+	}
+}
+
+func TestInferLangFromEntrypoint(t *testing.T) {
+	tests := []struct {
+		entrypoint string
+		want       string
+	}{
+		{"main.py", "python"},
+		{"scripts/run.py", "python"},
+		{"main.js", "node"},
+		{"main.sh", "bash"},
+		{"unknown", ""},
+		{"main.rb", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.entrypoint, func(t *testing.T) {
+			got := InferLangFromEntrypoint(tt.entrypoint)
+			if got != tt.want {
+				t.Errorf("InferLangFromEntrypoint(%q) = %q, want %q", tt.entrypoint, got, tt.want)
 			}
 		})
 	}

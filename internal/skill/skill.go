@@ -2,6 +2,7 @@ package skill
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -74,9 +75,14 @@ func ParseSkillMD(data []byte) (*Skill, error) {
 		return nil, fmt.Errorf("parse frontmatter YAML: %w", err)
 	}
 
+	version := f.Version
+	if version == "" {
+		version = "0.0.0"
+	}
+
 	s := &Skill{
 		Name:         f.Name,
-		Version:      f.Version,
+		Version:      version,
 		Description:  f.Description,
 		Lang:         f.Lang,
 		Image:        f.Image,
@@ -110,17 +116,13 @@ func (s *Skill) Validate() error {
 	} else if !nameRe.MatchString(s.Name) {
 		errs = append(errs, fmt.Sprintf("name %q contains invalid characters (use alphanumeric, hyphens, underscores, dots; must start with alphanumeric)", s.Name))
 	}
-	if s.Version == "" {
-		errs = append(errs, "version is required")
-	} else if !versionRe.MatchString(s.Version) {
+	if s.Version != "" && !versionRe.MatchString(s.Version) {
 		errs = append(errs, fmt.Sprintf("version %q must be semver (MAJOR.MINOR.PATCH)", s.Version))
 	}
 	if s.Description == "" {
 		errs = append(errs, "description is required")
 	}
-	if s.Lang == "" {
-		errs = append(errs, "lang is required")
-	} else if !validLangs[s.Lang] {
+	if s.Lang != "" && !validLangs[s.Lang] {
 		errs = append(errs, fmt.Sprintf("lang %q is not supported (use python, node, or bash)", s.Lang))
 	}
 
@@ -174,6 +176,21 @@ func ValidateVersion(version string) error {
 	return nil
 }
 
+// InferLangFromEntrypoint maps a file extension to a language runtime.
+// Returns an empty string if the extension is not recognized.
+func InferLangFromEntrypoint(entrypoint string) string {
+	switch filepath.Ext(entrypoint) {
+	case ".py":
+		return LangPython
+	case ".js":
+		return LangNode
+	case ".sh":
+		return LangBash
+	default:
+		return ""
+	}
+}
+
 // DefaultImage returns the canonical Docker image for the skill's language.
 // If a custom Image is already set on the Skill it is returned as-is.
 func (s *Skill) DefaultImage() string {
@@ -188,6 +205,6 @@ func (s *Skill) DefaultImage() string {
 	case LangBash:
 		return "bash:5"
 	default:
-		return ""
+		return "bash:5"
 	}
 }

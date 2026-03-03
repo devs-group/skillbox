@@ -381,6 +381,24 @@ func (c *Client) GetSkill(ctx context.Context, name, version string) (*SkillDeta
 	return &detail, nil
 }
 
+// DeleteSkill removes a specific skill version. The server responds with
+// 204 No Content on success.
+func (c *Client) DeleteSkill(ctx context.Context, name, version string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/skills/"+name+"/"+version, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
 // Health checks whether the Skillbox server is reachable. It returns nil
 // on success or an error describing the failure.
 func (c *Client) Health(ctx context.Context) error {

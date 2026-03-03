@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -158,7 +159,14 @@ func (c *Client) GetEndpoint(ctx context.Context, sandboxID string, port int) (*
 	if err := c.lcGet(ctx, path, nil, http.StatusOK, &raw); err != nil {
 		return nil, err
 	}
-	return &Endpoint{Host: raw.Host, Port: raw.Port, URL: raw.URL, Headers: raw.Headers}, nil
+	u := raw.URL
+	if u == "" {
+		u = raw.Endpoint
+	}
+	if u != "" && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		u = "http://" + u
+	}
+	return &Endpoint{Host: raw.Host, Port: raw.Port, URL: u, Headers: raw.Headers}, nil
 }
 
 // DiscoverExecD calls GetEndpoint for the standard ExecD port (44772).
@@ -218,12 +226,12 @@ func (c *Client) UploadFiles(ctx context.Context, execdURL string, files []FileU
 	mw := multipart.NewWriter(&buf)
 	for _, f := range files {
 		metaJSON, _ := json.Marshal(fileMetaWire{Path: f.Path, Mode: f.Mode})
-		p, err := mw.CreateFormField("metadata")
+		p, err := mw.CreateFormFile("metadata", "metadata.json")
 		if err != nil {
 			return fmt.Errorf("opensandbox: creating metadata part: %w", err)
 		}
 		p.Write(metaJSON)
-		fp, err := mw.CreateFormField("file")
+		fp, err := mw.CreateFormFile("file", filepath.Base(f.Path))
 		if err != nil {
 			return fmt.Errorf("opensandbox: creating file part: %w", err)
 		}
@@ -457,10 +465,11 @@ func (r *sandboxWire) decode() (*SandboxResponse, error) {
 }
 
 type endpointWire struct {
-	Host    string            `json:"host"`
-	Port    int               `json:"port"`
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
+	Host     string            `json:"host"`
+	Port     int               `json:"port"`
+	URL      string            `json:"url"`
+	Endpoint string            `json:"endpoint"`
+	Headers  map[string]string `json:"headers"`
 }
 
 type (

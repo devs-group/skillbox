@@ -116,6 +116,11 @@ func LoadSkill(ctx context.Context, reg *Registry, tenantID, skillName, version 
 		return nil, err
 	}
 
+	// Infer language from entrypoint extension if not specified.
+	if parsedSkill.Lang == "" {
+		parsedSkill.Lang = skill.InferLangFromEntrypoint(entrypoint)
+	}
+
 	// Check for dependency files.
 	hasReqs := fileExists(filepath.Join(tmpDir, "requirements.txt"))
 	hasPkg := fileExists(filepath.Join(tmpDir, "package.json"))
