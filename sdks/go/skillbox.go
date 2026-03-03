@@ -155,6 +155,13 @@ type FileFilter struct {
 	Offset      int
 }
 
+// SkillFileEntry represents a single source file extracted from a skill archive.
+type SkillFileEntry struct {
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	SizeBytes int    `json:"size_bytes"`
+}
+
 // Option configures a [Client]. Pass options to [New].
 type Option func(*Client)
 
@@ -383,6 +390,43 @@ func (c *Client) GetSkill(ctx context.Context, name, version string) (*SkillDeta
 		return nil, err
 	}
 	return &detail, nil
+}
+
+// GetSkillFiles retrieves the source files from a skill archive. Each entry
+// includes the file path, content, and size in bytes. Use the optional path
+// parameter to retrieve a single file.
+func (c *Client) GetSkillFiles(ctx context.Context, name, version string) ([]SkillFileEntry, error) {
+	path := "/v1/skills/" + name + "/" + version + "/files"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var files []SkillFileEntry
+	if err := c.decodeResponse(resp, &files); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// GetSkillFile retrieves a single source file from a skill archive by path.
+func (c *Client) GetSkillFile(ctx context.Context, name, version, filePath string) (*SkillFileEntry, error) {
+	p := "/v1/skills/" + name + "/" + version + "/files?path=" + url.QueryEscape(filePath)
+	resp, err := c.doRequest(ctx, http.MethodGet, p, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var files []SkillFileEntry
+	if err := c.decodeResponse(resp, &files); err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, &APIError{StatusCode: 404, ErrorCode: "not_found", Message: "file not found: " + filePath}
+	}
+	return &files[0], nil
 }
 
 // DeleteSkill removes a specific skill version. The server responds with

@@ -599,8 +599,8 @@ func TestUploadFiles_Success(t *testing.T) {
 		if meta.Path != "/app/main.py" {
 			t.Errorf("meta.Path = %q, want /app/main.py", meta.Path)
 		}
-		if meta.Mode != 0o644 {
-			t.Errorf("meta.Mode = %o, want 644", meta.Mode)
+		if meta.Mode != 644 {
+			t.Errorf("meta.Mode = %d, want 644", meta.Mode)
 		}
 
 		if files[0] != "print('hello')" {

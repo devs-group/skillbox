@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -225,7 +226,12 @@ func (c *Client) UploadFiles(ctx context.Context, execdURL string, files []FileU
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	for _, f := range files {
-		metaJSON, _ := json.Marshal(fileMetaWire{Path: f.Path, Mode: f.Mode})
+		// OpenSandbox parses mode as octal string via strconv.ParseUint(str, 8, 32).
+		// Go's os.FileMode stores 0o755 as 493 decimal. We need to send 755 (the octal
+		// digits as a plain int) so OpenSandbox parses "755" in base 8 correctly.
+		octalStr := fmt.Sprintf("%o", f.Mode)
+		modeForWire, _ := strconv.Atoi(octalStr)
+		metaJSON, _ := json.Marshal(fileMetaWire{Path: f.Path, Mode: modeForWire})
 		p, err := mw.CreateFormFile("metadata", "metadata.json")
 		if err != nil {
 			return fmt.Errorf("opensandbox: creating metadata part: %w", err)

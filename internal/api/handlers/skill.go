@@ -289,6 +289,118 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 	}
 }
 
+// SkillFileEntry represents a single file extracted from a skill archive.
+type SkillFileEntry struct {
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	SizeBytes int    `json:"size_bytes"`
+}
+
+// GetSkillFiles handles GET /v1/skills/:name/:version/files.
+// It downloads the skill zip from the registry, extracts all files, and
+// returns them as a JSON array. An optional "path" query parameter returns
+// only the matching file.
+func GetSkillFiles(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := middleware.GetTenantID(c)
+		name := c.Param("name")
+		version := c.Param("version")
+
+		if name == "" || version == "" {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "skill name and version are required")
+			return
+		}
+
+		if err := skill.ValidateName(name); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if err := skill.ValidateVersion(version); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+
+		if version == "latest" {
+			resolved, err := s.ResolveLatestVersion(c.Request.Context(), tenantID, name)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@latest")
+					return
+				}
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to resolve latest version: "+err.Error())
+				return
+			}
+			version = resolved
+		}
+
+		rc, err := reg.Download(c.Request.Context(), tenantID, name, version)
+		if err != nil {
+			if errors.Is(err, registry.ErrSkillNotFound) {
+				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@"+version)
+				return
+			}
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve skill: "+err.Error())
+			return
+		}
+		defer rc.Close() //nolint:errcheck
+
+		zipBytes, err := io.ReadAll(rc)
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to read skill archive: "+err.Error())
+			return
+		}
+
+		reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to open skill archive: "+err.Error())
+			return
+		}
+
+		filterPath := c.Query("path")
+		var entries []SkillFileEntry
+
+		for _, f := range reader.File {
+			if f.FileInfo().IsDir() {
+				continue
+			}
+			if strings.Contains(f.Name, "..") {
+				continue
+			}
+
+			filePath := strings.TrimPrefix(f.Name, "./")
+			if filterPath != "" && filePath != filterPath {
+				continue
+			}
+
+			frc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			data, err := io.ReadAll(frc)
+			frc.Close() //nolint:errcheck
+			if err != nil {
+				continue
+			}
+
+			entries = append(entries, SkillFileEntry{
+				Path:      filePath,
+				Content:   string(data),
+				SizeBytes: len(data),
+			})
+		}
+
+		if filterPath != "" && len(entries) == 0 {
+			response.RespondError(c, http.StatusNotFound, "not_found", "file not found: "+filterPath)
+			return
+		}
+
+		if entries == nil {
+			entries = []SkillFileEntry{}
+		}
+		c.JSON(http.StatusOK, entries)
+	}
+}
+
 // DeleteSkill handles DELETE /v1/skills/:name/:version.
 // It removes the skill from both the registry and the metadata store,
 // then returns 204 No Content.
