@@ -230,12 +230,16 @@ func (c *Client) UploadFiles(ctx context.Context, execdURL string, files []FileU
 		if err != nil {
 			return fmt.Errorf("opensandbox: creating metadata part: %w", err)
 		}
-		p.Write(metaJSON)
+		if _, wErr := p.Write(metaJSON); wErr != nil {
+			return fmt.Errorf("opensandbox: writing metadata: %w", wErr)
+		}
 		fp, err := mw.CreateFormFile("file", filepath.Base(f.Path))
 		if err != nil {
 			return fmt.Errorf("opensandbox: creating file part: %w", err)
 		}
-		fp.Write(f.Content)
+		if _, wErr := fp.Write(f.Content); wErr != nil {
+			return fmt.Errorf("opensandbox: writing file content: %w", wErr)
+		}
 	}
 	if err := mw.Close(); err != nil {
 		return fmt.Errorf("opensandbox: closing multipart writer: %w", err)
@@ -288,7 +292,7 @@ func (c *Client) DownloadFile(ctx context.Context, execdURL, path string) (io.Re
 		return nil, fmt.Errorf("opensandbox: download file %s: %w", path, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, c.errStatus("download file", resp)
 	}
 	return resp.Body, nil

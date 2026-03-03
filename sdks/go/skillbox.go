@@ -532,7 +532,7 @@ func (c *Client) DownloadFile(ctx context.Context, id, destPath string) error {
 		return fmt.Errorf("skillbox: create parent directory: %w", err)
 	}
 
-	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) // #nosec G304 -- path is validated above
+	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- path is validated above
 	if err != nil {
 		return fmt.Errorf("skillbox: create destination file: %w", err)
 	}

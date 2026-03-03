@@ -305,7 +305,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 				continue
 			}
 			content, readErr := io.ReadAll(io.LimitReader(reader, 100<<20)) // 100MB limit
-			reader.Close()
+			_ = reader.Close()
 			if readErr != nil {
 				log.Printf("runner: failed to read input file %s: %v", fileID, readErr)
 				continue
@@ -355,7 +355,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 	outputRC, dlErr := r.sandbox.DownloadFile(execCtx, execdURL, "/sandbox/out/output.json")
 	if dlErr == nil {
 		outputData, readErr := io.ReadAll(io.LimitReader(outputRC, 512<<20))
-		outputRC.Close()
+		_ = outputRC.Close()
 		if readErr != nil {
 			log.Printf("runner: failed to read output.json for execution %s: %v", executionID, readErr)
 		} else if json.Valid(outputData) {
@@ -405,13 +405,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 						}
 						info, statErr := f.Stat()
 						if statErr != nil {
-							f.Close()
+							_ = f.Close()
 							continue
 						}
 						if _, upErr := r.artifacts.UploadObject(ctx, s3Key, f, info.Size(), detectRunnerContentType(fileName)); upErr != nil {
 							log.Printf("runner: failed to upload individual file %s: %v", fileName, upErr)
 						}
-						f.Close()
+						_ = f.Close()
 					}
 
 					// Create file records in the database for each collected artifact.
@@ -598,12 +598,12 @@ func downloadArtifacts(ctx context.Context, client *sandbox.Client, execdURL str
 		}
 
 		data, readErr := io.ReadAll(io.LimitReader(rc, 512<<20)) // 512 MiB per-file limit
-		rc.Close()
+		_ = rc.Close()
 		if readErr != nil {
 			return "", fmt.Errorf("reading artifact %s: %w", entry.Path, readErr)
 		}
 
-		if writeErr := os.WriteFile(localPath, data, 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(localPath, data, 0o600); writeErr != nil { // #nosec G306
 			return "", fmt.Errorf("writing artifact %s: %w", localPath, writeErr)
 		}
 	}
