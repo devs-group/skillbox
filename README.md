@@ -30,7 +30,7 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 | **"Three teams built three sandbox wrappers"** | One runtime. One API. One security review. |
 | **"Our agents don't know what tools are available"** | Skill catalog — agents discover, inspect, and choose capabilities. |
 | **"We need GDPR/EU AI Act compliance"** | Data never leaves your network. MIT license. |
-| **"Docker is insecure for running untrusted code"** | OpenSandbox with 11 layers of hardening, enforced by the runtime, not configurable by callers. |
+| **"Docker is insecure for running untrusted code"** | [OpenSandbox](https://github.com/alibaba/OpenSandbox) with 6 layers of hardening enforced by the runtime, not configurable by callers. |
 
 ### Compared to Alternatives
 
@@ -48,11 +48,11 @@ print(result.output)  # {"row_count": 5, "mean": 3.0, ...}
 
 ## Features
 
-- **Secure by default** — OpenSandbox isolation with network disabled, all capabilities dropped, read-only rootfs, PID limits, non-root user, no-new-privileges, image allowlist. 11 layers. Not optional.
+- **Secure by default** — [OpenSandbox](https://github.com/alibaba/OpenSandbox) isolation with network disabled, resource limits enforced, image allowlist, timeout enforcement, env var blocking, and API-based lifecycle (no Docker socket). 6 layers, all mandatory.
 - **Skill catalog** — Skills are versioned, discoverable, introspectable units with YAML metadata + markdown instructions. Agents understand what's available before executing.
 - **Structured I/O** — Skills read JSON input, write JSON output, and produce file artifacts. No stdout parsing.
 - **LangChain-ready** — Skills map 1:1 to LangChain tools. `get_skill` returns descriptions for tool selection.
-- **Self-hosted** — Docker Compose with OpenSandbox service (dev), Kubernetes (prod), Helm chart. Air-gapped? Works offline.
+- **Self-hosted** — Docker Compose with [OpenSandbox](https://github.com/alibaba/OpenSandbox) service (dev), Kubernetes (prod), Helm chart. Air-gapped? Works offline.
 - **Multi-tenant** — API keys scoped to tenants, skills and executions isolated.
 - **Zero-dep SDKs** — Go and Python clients use only the standard library. No dependency conflicts.
 - **CLI** — Push, lint, run, package, and manage skills from the terminal.
@@ -97,15 +97,10 @@ Security is enforced by the runtime — **not configurable away by callers**:
 | Control | Implementation | Threat Mitigated |
 |---|---|---|
 | Network isolation | OpenSandbox NetworkPolicy (`defaultAction: deny`) | Data exfiltration, SSRF |
-| Capability drop | OpenSandbox container security context | Privilege escalation |
-| Read-only rootfs | OpenSandbox container config | Filesystem tampering |
-| PID limit | OpenSandbox resource limits | Fork bombs |
-| No-new-privileges | OpenSandbox security context | setuid/setgid escalation |
-| Non-root user | `UID 65534:65534` (set by runner) | Container escape |
+| Resource limits | CPU and memory caps sent to OpenSandbox, clamped to server-side maximums | Fork bombs, resource exhaustion |
 | Image allowlist | Validated by Skillbox before `CreateSandbox` call | Supply-chain attack |
 | Timeout | Go context cancellation + sandbox TTL | Resource exhaustion |
-| tmpfs | OpenSandbox mounts | Binary execution in writable areas |
-| Env var blocking | Filtered by runner before passing to sandbox | Library injection |
+| Env var blocking | `LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`, `SANDBOX_*` filtered before passing | Library injection |
 | Sandbox lifecycle | OpenSandbox API (no Docker socket required) | Host escape |
 
 For genuinely untrusted code, gVisor or Kata Containers can be enabled as a Kubernetes RuntimeClass with zero changes to Skillbox.
