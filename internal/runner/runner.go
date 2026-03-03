@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,15 +162,30 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		return result, nil
 	}
 
-	// Determine resource limits. Use skill-level overrides or server defaults.
+	// Determine resource limits. Use skill-level overrides or server defaults,
+	// clamped to server-side maximums to prevent resource exhaustion.
 	memoryStr := r.config.DefaultMemoryStr()
 	if loadedSkill.Skill.Resources.Memory != "" {
 		memoryStr = loadedSkill.Skill.Resources.Memory
+		// Clamp to MaxMemory if the skill requests more than allowed.
+		if requested, parseErr := config.ParseMemory(memoryStr); parseErr == nil && requested > r.config.MaxMemory {
+			slog.Warn("clamping skill memory to server maximum",
+				"skill", req.Skill, "requested", memoryStr,
+				"max_bytes", r.config.MaxMemory)
+			memoryStr = r.config.DefaultMemoryStr()
+		}
 	}
 
 	cpuStr := r.config.DefaultCPUStr()
 	if loadedSkill.Skill.Resources.CPU != "" {
 		cpuStr = loadedSkill.Skill.Resources.CPU
+		// Clamp to MaxCPU if the skill requests more than allowed.
+		if requested, parseErr := strconv.ParseFloat(cpuStr, 64); parseErr == nil && requested > r.config.MaxCPU {
+			slog.Warn("clamping skill CPU to server maximum",
+				"skill", req.Skill, "requested", cpuStr,
+				"max_cpu", r.config.MaxCPU)
+			cpuStr = r.config.DefaultCPUStr()
+		}
 	}
 
 	// Determine execution timeout.
@@ -346,6 +363,26 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 				} else {
 					result.FilesURL = artifactURL
 					result.FilesList = filesList
+
+					// Upload individual files so /v1/files/:id/download works.
+					for _, fileName := range filesList {
+						s3Key := fmt.Sprintf("%s/%s/%s", req.TenantID, executionID, fileName)
+						filePath := filepath.Join(tmpDir, fileName)
+						f, openErr := os.Open(filePath)
+						if openErr != nil {
+							log.Printf("runner: failed to open %s for individual upload: %v", fileName, openErr)
+							continue
+						}
+						info, statErr := f.Stat()
+						if statErr != nil {
+							f.Close()
+							continue
+						}
+						if _, upErr := r.artifacts.UploadObject(ctx, s3Key, f, info.Size(), detectRunnerContentType(fileName)); upErr != nil {
+							log.Printf("runner: failed to upload individual file %s: %v", fileName, upErr)
+						}
+						f.Close()
+					}
 
 					// Create file records in the database for each collected artifact.
 					for _, fileName := range filesList {

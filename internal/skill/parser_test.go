@@ -254,6 +254,81 @@ func TestParseFrontmatterEdgeCases(t *testing.T) {
 	})
 }
 
+func TestValidateName(t *testing.T) {
+	valid := []string{"hello", "data-analyzer", "my_skill", "skill.v2", "A123", "a"}
+	for _, name := range valid {
+		t.Run("valid_"+name, func(t *testing.T) {
+			if err := ValidateName(name); err != nil {
+				t.Errorf("ValidateName(%q) = %v, want nil", name, err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"",
+		"../traversal",
+		"skill/name",
+		"skill\\name",
+		".hidden",
+		"-starts-with-dash",
+		"_starts-with-underscore",
+		"has spaces",
+		"has\x00null",
+		strings.Repeat("a", 129), // exceeds 128 char limit
+	}
+	for _, name := range invalid {
+		label := name
+		if len(label) > 20 {
+			label = label[:20] + "..."
+		}
+		t.Run("invalid_"+label, func(t *testing.T) {
+			if err := ValidateName(name); err == nil {
+				t.Errorf("ValidateName(%q) = nil, want error", name)
+			}
+		})
+	}
+}
+
+func TestValidateVersion(t *testing.T) {
+	valid := []string{"", "latest", "1.0.0", "1.0.0-beta"}
+	for _, v := range valid {
+		t.Run("valid_"+v, func(t *testing.T) {
+			if err := ValidateVersion(v); err != nil {
+				t.Errorf("ValidateVersion(%q) = %v, want nil", v, err)
+			}
+		})
+	}
+
+	invalid := []string{"../traversal", "v1.0.0", "1.0", "abc"}
+	for _, v := range invalid {
+		t.Run("invalid_"+v, func(t *testing.T) {
+			if err := ValidateVersion(v); err == nil {
+				t.Errorf("ValidateVersion(%q) = nil, want error", v)
+			}
+		})
+	}
+}
+
+func TestParseSkillNameTraversal(t *testing.T) {
+	// Skill names containing path traversal characters should be rejected
+	// during parsing since Validate() is called.
+	input := []byte(`---
+name: "../../etc/passwd"
+version: 1.0.0
+description: Malicious skill
+lang: python
+---
+body
+`)
+	_, err := ParseSkillMD(input)
+	if err == nil {
+		t.Fatal("expected error for skill name with path traversal")
+	}
+	if !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("error = %q, want it to mention invalid characters", err.Error())
+	}
+}
+
 func TestParseVersionFormats(t *testing.T) {
 	validVersions := []string{"0.0.1", "1.0.0", "10.20.30", "1.0.0-beta", "2.0.0-rc.1"}
 	for _, v := range validVersions {

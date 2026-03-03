@@ -105,12 +105,12 @@ func TestGetFile_ReturnsRecord(t *testing.T) {
 	parentID := "parent-uuid"
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", "tenant-1", "sess-1", "exec-1", "report.csv", "text/csv",
 				int64(1024), "tenant-1/exec-1/v1/report.csv", 1, parentID, now, now))
 
-	f, err := s.GetFile(context.Background(), "file-uuid-1")
+	f, err := s.GetFile(context.Background(), "file-uuid-1", "tenant-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -162,12 +162,12 @@ func TestGetFile_NullOptionalFields(t *testing.T) {
 	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-2").
+		WithArgs("file-uuid-2", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-2", "tenant-1", nil, nil, "standalone.txt", "text/plain",
 				int64(256), "tenant-1/standalone.txt", 1, nil, now, now))
 
-	f, err := s.GetFile(context.Background(), "file-uuid-2")
+	f, err := s.GetFile(context.Background(), "file-uuid-2", "tenant-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,10 +196,10 @@ func TestGetFile_NotFound(t *testing.T) {
 	s := &Store{db: db}
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
-	_, err = s.GetFile(context.Background(), "missing-uuid")
+	_, err = s.GetFile(context.Background(), "missing-uuid", "tenant-1")
 	if err != ErrNotFound {
 		t.Errorf("error = %v, want ErrNotFound", err)
 	}
@@ -428,10 +428,10 @@ func TestDeleteFile_Success(t *testing.T) {
 	s := &Store{db: db}
 
 	mock.ExpectExec("DELETE FROM sandbox.files").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", "tenant-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err = s.DeleteFile(context.Background(), "file-uuid-1")
+	err = s.DeleteFile(context.Background(), "file-uuid-1", "tenant-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -451,10 +451,10 @@ func TestDeleteFile_NotFound(t *testing.T) {
 	s := &Store{db: db}
 
 	mock.ExpectExec("DELETE FROM sandbox.files").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", "tenant-1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	err = s.DeleteFile(context.Background(), "missing-uuid")
+	err = s.DeleteFile(context.Background(), "missing-uuid", "tenant-1")
 	if err != ErrNotFound {
 		t.Errorf("error = %v, want ErrNotFound", err)
 	}
@@ -476,7 +476,7 @@ func TestDeleteFile_DBError(t *testing.T) {
 	mock.ExpectExec("DELETE FROM sandbox.files").
 		WillReturnError(context.DeadlineExceeded)
 
-	err = s.DeleteFile(context.Background(), "file-uuid-1")
+	err = s.DeleteFile(context.Background(), "file-uuid-1", "tenant-1")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -501,14 +501,14 @@ func TestListFileVersions_ReturnsVersionChain(t *testing.T) {
 	rootID := "file-root"
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-root").
+		WithArgs("file-root", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-v2", "tenant-1", "sess-1", "exec-1", "report.csv", "text/csv",
 				int64(2048), "key-v2", 2, rootID, now, now).
 			AddRow("file-root", "tenant-1", "sess-1", "exec-1", "report.csv", "text/csv",
 				int64(1024), "key-v1", 1, nil, now, now))
 
-	versions, err := s.ListFileVersions(context.Background(), "file-root")
+	versions, err := s.ListFileVersions(context.Background(), "file-root", "tenant-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -544,10 +544,10 @@ func TestListFileVersions_Empty(t *testing.T) {
 	s := &Store{db: db}
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("nonexistent").
+		WithArgs("nonexistent", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
-	versions, err := s.ListFileVersions(context.Background(), "nonexistent")
+	versions, err := s.ListFileVersions(context.Background(), "nonexistent", "tenant-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -572,7 +572,7 @@ func TestListFileVersions_DBError(t *testing.T) {
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
 		WillReturnError(context.DeadlineExceeded)
 
-	_, err = s.ListFileVersions(context.Background(), "file-root")
+	_, err = s.ListFileVersions(context.Background(), "file-root", "tenant-1")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

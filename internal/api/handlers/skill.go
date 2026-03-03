@@ -224,6 +224,16 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			return
 		}
 
+		// Validate name and version to prevent S3 path traversal.
+		if err := skill.ValidateName(name); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if err := skill.ValidateVersion(version); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+
 		// Resolve "latest" to the most recently uploaded version.
 		if version == "latest" {
 			resolved, err := s.ResolveLatestVersion(c.Request.Context(), tenantID, name)
@@ -290,6 +300,16 @@ func DeleteSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 
 		if name == "" || version == "" {
 			response.RespondError(c, http.StatusBadRequest, "bad_request", "skill name and version are required")
+			return
+		}
+
+		// Validate name and version to prevent S3 path traversal.
+		if err := skill.ValidateName(name); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if err := skill.ValidateVersion(version); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 

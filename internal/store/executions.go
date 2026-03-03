@@ -33,7 +33,7 @@ type Execution struct {
 // The Execution is mutated in place with the server-generated ID and timestamp.
 func (s *Store) CreateExecution(ctx context.Context, e *Execution) (*Execution, error) {
 	e.Status = "running"
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		INSERT INTO sandbox.executions (skill_name, skill_version, tenant_id, status, input)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at
@@ -48,7 +48,7 @@ func (s *Store) CreateExecution(ctx context.Context, e *Execution) (*Execution, 
 // InsertExecution creates a new execution record. This is an alias kept
 // for compatibility with callers that set status before calling.
 func (s *Store) InsertExecution(ctx context.Context, e *Execution) error {
-	return s.db.QueryRowContext(ctx, `
+	return s.conn().QueryRowContext(ctx, `
 		INSERT INTO sandbox.executions (skill_name, skill_version, tenant_id, status, input)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at
@@ -59,7 +59,7 @@ func (s *Store) InsertExecution(ctx context.Context, e *Execution) error {
 // UpdateExecution writes back mutable fields for an existing execution.
 // Typically called once the execution has completed (or timed out).
 func (s *Store) UpdateExecution(ctx context.Context, e *Execution) error {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.conn().ExecContext(ctx, `
 		UPDATE sandbox.executions
 		SET status = $2,
 		    output = $3,
@@ -88,18 +88,18 @@ func (s *Store) UpdateExecution(ctx context.Context, e *Execution) error {
 	return nil
 }
 
-// GetExecution retrieves a single execution by its UUID.
-// Returns ErrNotFound if the execution does not exist.
-func (s *Store) GetExecution(ctx context.Context, id string) (*Execution, error) {
+// GetExecution retrieves a single execution by its UUID, scoped to a tenant.
+// Returns ErrNotFound if the execution does not exist or belongs to another tenant.
+func (s *Store) GetExecution(ctx context.Context, id, tenantID string) (*Execution, error) {
 	e := &Execution{}
 	var filesList []sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		SELECT id, skill_name, skill_version, tenant_id, status,
 		       input, output, logs, files_url, files_list,
 		       duration_ms, error, created_at, finished_at
 		FROM sandbox.executions
-		WHERE id = $1
-	`, id).Scan(
+		WHERE id = $1 AND tenant_id = $2
+	`, id, tenantID).Scan(
 		&e.ID, &e.SkillName, &e.SkillVersion, &e.TenantID, &e.Status,
 		&e.Input, &e.Output, &e.Logs, &e.FilesURL, pq.Array(&filesList),
 		&e.DurationMs, &e.Error, &e.CreatedAt, &e.FinishedAt,
@@ -132,7 +132,7 @@ func (s *Store) ListExecutions(ctx context.Context, tenantID string, limit, offs
 		offset = 0
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.conn().QueryContext(ctx, `
 		SELECT id, skill_name, skill_version, tenant_id, status,
 		       input, output, logs, files_url, files_list,
 		       duration_ms, error, created_at, finished_at

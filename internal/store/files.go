@@ -36,7 +36,7 @@ type FileFilter struct {
 // CreateFile inserts a new file record. The File is mutated in place with
 // the server-generated ID and timestamps.
 func (s *Store) CreateFile(ctx context.Context, f *File) (*File, error) {
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		INSERT INTO sandbox.files (tenant_id, session_id, execution_id, name, content_type, size_bytes, s3_key, version, parent_id)
 		VALUES ($1, nullif($2, ''), nullif($3, '')::UUID, $4, $5, $6, $7, $8, nullif($9, '')::UUID)
 		RETURNING id, created_at, updated_at
@@ -49,17 +49,17 @@ func (s *Store) CreateFile(ctx context.Context, f *File) (*File, error) {
 	return f, nil
 }
 
-// GetFile retrieves a single file record by its UUID.
-// Returns ErrNotFound if the file does not exist.
-func (s *Store) GetFile(ctx context.Context, id string) (*File, error) {
+// GetFile retrieves a single file record by its UUID, scoped to a tenant.
+// Returns ErrNotFound if the file does not exist or belongs to another tenant.
+func (s *Store) GetFile(ctx context.Context, id, tenantID string) (*File, error) {
 	f := &File{}
 	var sessionID, executionID, parentID sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		SELECT id, tenant_id, session_id, execution_id, name, content_type,
 		       size_bytes, s3_key, version, parent_id, created_at, updated_at
 		FROM sandbox.files
-		WHERE id = $1
-	`, id).Scan(
+		WHERE id = $1 AND tenant_id = $2
+	`, id, tenantID).Scan(
 		&f.ID, &f.TenantID, &sessionID, &executionID, &f.Name, &f.ContentType,
 		&f.SizeBytes, &f.S3Key, &f.Version, &parentID, &f.CreatedAt, &f.UpdatedAt,
 	)
@@ -94,7 +94,7 @@ func (s *Store) ListFiles(ctx context.Context, filter FileFilter) ([]*File, erro
 		filter.Offset = 0
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.conn().QueryContext(ctx, `
 		SELECT id, tenant_id, session_id, execution_id, name, content_type,
 		       size_bytes, s3_key, version, parent_id, created_at, updated_at
 		FROM sandbox.files
@@ -142,7 +142,7 @@ func (s *Store) ListFiles(ctx context.Context, filter FileFilter) ([]*File, erro
 // UpdateFile updates a file record's mutable fields: name, content_type,
 // size_bytes, s3_key, and version. It also sets updated_at to now().
 func (s *Store) UpdateFile(ctx context.Context, f *File) error {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.conn().ExecContext(ctx, `
 		UPDATE sandbox.files
 		SET name = $2,
 		    content_type = $3,
@@ -170,11 +170,11 @@ func (s *Store) UpdateFile(ctx context.Context, f *File) error {
 	return nil
 }
 
-// DeleteFile removes a file record by its UUID.
-func (s *Store) DeleteFile(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `
-		DELETE FROM sandbox.files WHERE id = $1
-	`, id)
+// DeleteFile removes a file record by its UUID, scoped to a tenant.
+func (s *Store) DeleteFile(ctx context.Context, id, tenantID string) error {
+	res, err := s.conn().ExecContext(ctx, `
+		DELETE FROM sandbox.files WHERE id = $1 AND tenant_id = $2
+	`, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("delete file: %w", err)
 	}
@@ -192,15 +192,15 @@ func (s *Store) DeleteFile(ctx context.Context, id string) error {
 
 // ListFileVersions returns all versions of a file, following the parent_id
 // chain. It finds all files where id = fileID or parent_id = fileID,
-// ordered by version descending.
-func (s *Store) ListFileVersions(ctx context.Context, fileID string) ([]*File, error) {
-	rows, err := s.db.QueryContext(ctx, `
+// ordered by version descending. Scoped to tenant_id for isolation.
+func (s *Store) ListFileVersions(ctx context.Context, fileID, tenantID string) ([]*File, error) {
+	rows, err := s.conn().QueryContext(ctx, `
 		SELECT id, tenant_id, session_id, execution_id, name, content_type,
 		       size_bytes, s3_key, version, parent_id, created_at, updated_at
 		FROM sandbox.files
-		WHERE id = $1 OR parent_id = $1
+		WHERE (id = $1 OR parent_id = $1) AND tenant_id = $2
 		ORDER BY version DESC
-	`, fileID)
+	`, fileID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list file versions: %w", err)
 	}

@@ -7,9 +7,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/api/middleware"
+	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/runner"
+	"github.com/devs-group/skillbox/internal/skill"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -35,6 +36,16 @@ func CreateExecution(r *runner.Runner) gin.HandlerFunc {
 
 		if req.Skill == "" {
 			response.RespondError(c, http.StatusBadRequest, "bad_request", "'skill' is required")
+			return
+		}
+
+		// Validate skill name and version to prevent S3 path traversal.
+		if err := skill.ValidateName(req.Skill); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if err := skill.ValidateVersion(req.Version); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 
@@ -91,20 +102,13 @@ func GetExecution(s *store.Store) gin.HandlerFunc {
 
 		tenantID := middleware.GetTenantID(c)
 
-		exec, err := s.GetExecution(c.Request.Context(), id)
+		exec, err := s.GetExecution(c.Request.Context(), id, tenantID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				response.RespondError(c, http.StatusNotFound, "not_found", "execution not found")
 				return
 			}
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve execution")
-			return
-		}
-
-		// Enforce tenant isolation: a key must not see executions from
-		// other tenants.
-		if exec.TenantID != tenantID {
-			response.RespondError(c, http.StatusNotFound, "not_found", "execution not found")
 			return
 		}
 
@@ -124,18 +128,13 @@ func GetExecutionLogs(s *store.Store) gin.HandlerFunc {
 
 		tenantID := middleware.GetTenantID(c)
 
-		exec, err := s.GetExecution(c.Request.Context(), id)
+		exec, err := s.GetExecution(c.Request.Context(), id, tenantID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				response.RespondError(c, http.StatusNotFound, "not_found", "execution not found")
 				return
 			}
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve execution")
-			return
-		}
-
-		if exec.TenantID != tenantID {
-			response.RespondError(c, http.StatusNotFound, "not_found", "execution not found")
 			return
 		}
 

@@ -23,6 +23,10 @@ var validLangs = map[string]bool{
 	LangBash:   true,
 }
 
+// nameRe validates skill names: alphanumeric, hyphens, underscores, and dots.
+// Must start with an alphanumeric character. No path separators or traversal.
+var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
 // versionRe validates semantic-version-like strings: MAJOR.MINOR.PATCH
 // with optional pre-release suffix (e.g. 1.0.0, 2.3.1-beta).
 var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$`)
@@ -103,6 +107,8 @@ func (s *Skill) Validate() error {
 
 	if s.Name == "" {
 		errs = append(errs, "name is required")
+	} else if !nameRe.MatchString(s.Name) {
+		errs = append(errs, fmt.Sprintf("name %q contains invalid characters (use alphanumeric, hyphens, underscores, dots; must start with alphanumeric)", s.Name))
 	}
 	if s.Version == "" {
 		errs = append(errs, "version is required")
@@ -143,6 +149,29 @@ type SkillSummary struct {
 	Version     string `json:"version"`
 	Description string `json:"description"`
 	Lang        string `json:"lang"`
+}
+
+// ValidateName checks that a skill name contains only safe characters.
+// It rejects path traversal sequences, slashes, and other unsafe characters.
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !nameRe.MatchString(name) {
+		return fmt.Errorf("name %q contains invalid characters", name)
+	}
+	return nil
+}
+
+// ValidateVersion checks that a version string is valid semver or "latest".
+func ValidateVersion(version string) error {
+	if version == "" || version == "latest" {
+		return nil
+	}
+	if !versionRe.MatchString(version) {
+		return fmt.Errorf("version %q must be semver (MAJOR.MINOR.PATCH)", version)
+	}
+	return nil
 }
 
 // DefaultImage returns the canonical Docker image for the skill's language.

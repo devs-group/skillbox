@@ -71,18 +71,13 @@ func (h *FilesHandler) Get(c *gin.Context) {
 
 	tenantID := middleware.GetTenantID(c)
 
-	file, err := h.store.GetFile(c.Request.Context(), id)
+	file, err := h.store.GetFile(c.Request.Context(), id, tenantID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
 			return
 		}
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve file")
-		return
-	}
-
-	if file.TenantID != tenantID {
-		response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 
@@ -100,18 +95,13 @@ func (h *FilesHandler) Download(c *gin.Context) {
 
 	tenantID := middleware.GetTenantID(c)
 
-	file, err := h.store.GetFile(c.Request.Context(), id)
+	file, err := h.store.GetFile(c.Request.Context(), id, tenantID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
 			return
 		}
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve file")
-		return
-	}
-
-	if file.TenantID != tenantID {
-		response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 
@@ -143,18 +133,13 @@ func (h *FilesHandler) Update(c *gin.Context) {
 
 	tenantID := middleware.GetTenantID(c)
 
-	existing, err := h.store.GetFile(c.Request.Context(), id)
+	existing, err := h.store.GetFile(c.Request.Context(), id, tenantID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
 			return
 		}
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to retrieve file")
-		return
-	}
-
-	if existing.TenantID != tenantID {
-		response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 
@@ -216,7 +201,7 @@ func (h *FilesHandler) Delete(c *gin.Context) {
 
 	tenantID := middleware.GetTenantID(c)
 
-	file, err := h.store.GetFile(c.Request.Context(), id)
+	file, err := h.store.GetFile(c.Request.Context(), id, tenantID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
@@ -226,12 +211,7 @@ func (h *FilesHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if file.TenantID != tenantID {
-		response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
-		return
-	}
-
-	if deleteErr := h.store.DeleteFile(c.Request.Context(), id); deleteErr != nil {
+	if deleteErr := h.store.DeleteFile(c.Request.Context(), id, tenantID); deleteErr != nil {
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to delete file record")
 		return
 	}
@@ -256,7 +236,7 @@ func (h *FilesHandler) Versions(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 
 	// Verify the file exists and belongs to the tenant.
-	file, err := h.store.GetFile(c.Request.Context(), id)
+	_, err := h.store.GetFile(c.Request.Context(), id, tenantID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
@@ -266,12 +246,7 @@ func (h *FilesHandler) Versions(c *gin.Context) {
 		return
 	}
 
-	if file.TenantID != tenantID {
-		response.RespondError(c, http.StatusNotFound, "not_found", "file not found")
-		return
-	}
-
-	versions, versErr := h.store.ListFileVersions(c.Request.Context(), id)
+	versions, versErr := h.store.ListFileVersions(c.Request.Context(), id, tenantID)
 	if versErr != nil {
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to list file versions")
 		return

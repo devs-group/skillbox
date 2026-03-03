@@ -27,7 +27,7 @@ var ErrNotFound = errors.New("not found")
 // or has been revoked.
 func (s *Store) ValidateKey(ctx context.Context, keyHash string) (*APIKey, error) {
 	k := &APIKey{}
-	err := s.db.QueryRowContext(ctx,
+	err := s.conn().QueryRowContext(ctx,
 		`SELECT id, key_hash, tenant_id, name, created_at, revoked_at
 		   FROM sandbox.api_keys
 		  WHERE key_hash = $1`,
@@ -53,7 +53,7 @@ func (s *Store) ValidateKey(ctx context.Context, keyHash string) (*APIKey, error
 // (including the server-generated UUID and timestamp).
 func (s *Store) CreateKey(ctx context.Context, tenantID, name, keyHash string) (*APIKey, error) {
 	k := &APIKey{}
-	err := s.db.QueryRowContext(ctx,
+	err := s.conn().QueryRowContext(ctx,
 		`INSERT INTO sandbox.api_keys (key_hash, tenant_id, name)
 		 VALUES ($1, $2, $3)
 		 RETURNING id, key_hash, tenant_id, name, created_at, revoked_at`,
@@ -69,7 +69,7 @@ func (s *Store) CreateKey(ctx context.Context, tenantID, name, keyHash string) (
 // by creation time (newest first). Revoked keys are included so the
 // caller can display their status.
 func (s *Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.conn().QueryContext(ctx,
 		`SELECT id, key_hash, tenant_id, name, created_at, revoked_at
 		   FROM sandbox.api_keys
 		  WHERE tenant_id = $1
@@ -99,7 +99,7 @@ func (s *Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error)
 // RevokeKey soft-deletes an API key by setting its revoked_at timestamp.
 // It returns an error if the key does not exist or is already revoked.
 func (s *Store) RevokeKey(ctx context.Context, keyID string) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := s.conn().ExecContext(ctx,
 		`UPDATE sandbox.api_keys
 		    SET revoked_at = now()
 		  WHERE id = $1 AND revoked_at IS NULL`,
@@ -124,7 +124,7 @@ func (s *Store) RevokeKey(ctx context.Context, keyID string) error {
 // It returns ErrNotFound if no matching key exists.
 func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKey, error) {
 	k := &APIKey{}
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		SELECT id, key_hash, tenant_id, name, created_at, revoked_at
 		FROM sandbox.api_keys
 		WHERE key_hash = $1

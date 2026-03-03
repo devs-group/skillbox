@@ -644,7 +644,7 @@ func TestRouter_GetFile_Returns200(t *testing.T) {
 	expectAuthLookup(mock, testToken)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, "sess-1", "exec-1",
 				"report.csv", "text/csv", int64(2048), "s3/report", 1, nil, now, now))
@@ -688,7 +688,7 @@ func TestRouter_GetFile_NotFound_Returns404(t *testing.T) {
 	expectAuthLookup(mock, testToken)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
@@ -715,16 +715,13 @@ func TestRouter_GetFile_TenantIsolation_Returns404(t *testing.T) {
 	router, mock, cleanup := newFilesRouter(t)
 	defer cleanup()
 
-	now := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-
 	expectAuthLookup(mock, testToken)
 
-	// File belongs to a different tenant.
+	// SQL filters by tenant_id, so a file belonging to a different tenant
+	// simply returns no rows for the caller's tenant.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
-		WillReturnRows(sqlmock.NewRows(fileColumns).
-			AddRow("file-uuid-1", "other-tenant", nil, nil, "secret.txt",
-				"text/plain", int64(100), "s3/secret", 1, nil, now, now))
+		WithArgs("file-uuid-1", testTenantID).
+		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, authRequest(http.MethodGet, "/v1/files/file-uuid-1"))
@@ -770,14 +767,14 @@ func TestRouter_DeleteFile_Returns204(t *testing.T) {
 
 	// GetFile to verify ownership.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, nil, nil, "doomed.txt",
 				"text/plain", int64(50), "s3/doomed", 1, nil, now, now))
 
 	// DeleteFile.
 	mock.ExpectExec("DELETE FROM sandbox.files").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	w := httptest.NewRecorder()
@@ -799,7 +796,7 @@ func TestRouter_DeleteFile_NotFound_Returns404(t *testing.T) {
 	expectAuthLookup(mock, testToken)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
@@ -818,16 +815,13 @@ func TestRouter_DeleteFile_TenantIsolation_Returns404(t *testing.T) {
 	router, mock, cleanup := newFilesRouter(t)
 	defer cleanup()
 
-	now := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-
 	expectAuthLookup(mock, testToken)
 
-	// File belongs to different tenant.
+	// SQL filters by tenant_id, so a file belonging to a different tenant
+	// simply returns no rows for the caller's tenant.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
-		WillReturnRows(sqlmock.NewRows(fileColumns).
-			AddRow("file-uuid-1", "other-tenant", nil, nil, "nope.txt",
-				"text/plain", int64(10), "s3/nope", 1, nil, now, now))
+		WithArgs("file-uuid-1", testTenantID).
+		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, authRequest(http.MethodDelete, "/v1/files/file-uuid-1"))
@@ -864,14 +858,14 @@ func TestRouter_DeleteFile_DBError_Returns500(t *testing.T) {
 
 	// GetFile succeeds.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, nil, nil, "doomed.txt",
 				"text/plain", int64(50), "s3/doomed", 1, nil, now, now))
 
 	// DeleteFile fails.
 	mock.ExpectExec("DELETE FROM sandbox.files").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnError(http.ErrServerClosed)
 
 	w := httptest.NewRecorder()
@@ -906,14 +900,14 @@ func TestRouter_FileVersions_Returns200(t *testing.T) {
 
 	// GetFile (ownership check).
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(100), "s3/v1", 1, nil, now, now))
 
 	// ListFileVersions.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-v2", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(200), "s3/v2", 2, &parentID, now, now).
@@ -960,14 +954,14 @@ func TestRouter_FileVersions_EmptyReturnsArray(t *testing.T) {
 
 	// GetFile (ownership check).
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(100), "s3/v1", 1, nil, now, now))
 
 	// ListFileVersions returns no rows.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
@@ -993,7 +987,7 @@ func TestRouter_FileVersions_NotFound_Returns404(t *testing.T) {
 	expectAuthLookup(mock, testToken)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
@@ -1017,16 +1011,13 @@ func TestRouter_FileVersions_TenantIsolation_Returns404(t *testing.T) {
 	router, mock, cleanup := newFilesRouter(t)
 	defer cleanup()
 
-	now := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-
 	expectAuthLookup(mock, testToken)
 
-	// File belongs to different tenant.
+	// SQL filters by tenant_id, so a file belonging to a different tenant
+	// simply returns no rows for the caller's tenant.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
-		WillReturnRows(sqlmock.NewRows(fileColumns).
-			AddRow("file-uuid-1", "other-tenant", nil, nil, "secret.csv",
-				"text/csv", int64(100), "s3/key", 1, nil, now, now))
+		WithArgs("file-uuid-1", testTenantID).
+		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, authRequest(http.MethodGet, "/v1/files/file-uuid-1/versions"))
@@ -1063,14 +1054,14 @@ func TestRouter_FileVersions_DBError_Returns500(t *testing.T) {
 
 	// GetFile succeeds.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(100), "s3/v1", 1, nil, now, now))
 
 	// ListFileVersions fails.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnError(http.ErrServerClosed)
 
 	w := httptest.NewRecorder()
@@ -1176,7 +1167,7 @@ func TestRouter_DownloadFile_NilCollector_Returns500(t *testing.T) {
 
 	// GetFile succeeds (needed before download attempt).
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, nil, nil, "report.pdf",
 				"application/pdf", int64(4096), "s3/report.pdf", 1, nil, now, now))
@@ -1202,7 +1193,7 @@ func TestRouter_DownloadFile_NotFound_Returns404(t *testing.T) {
 	expectAuthLookup(mock, testToken)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
@@ -1221,15 +1212,13 @@ func TestRouter_DownloadFile_TenantIsolation_Returns404(t *testing.T) {
 	router, mock, cleanup := newFilesRouter(t)
 	defer cleanup()
 
-	now := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-
 	expectAuthLookup(mock, testToken)
 
+	// SQL filters by tenant_id, so a file belonging to a different tenant
+	// simply returns no rows for the caller's tenant.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
-		WillReturnRows(sqlmock.NewRows(fileColumns).
-			AddRow("file-uuid-1", "other-tenant", nil, nil, "secret.pdf",
-				"application/pdf", int64(1024), "s3/secret", 1, nil, now, now))
+		WithArgs("file-uuid-1", testTenantID).
+		WillReturnRows(sqlmock.NewRows(fileColumns))
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, authRequest(http.MethodGet, "/v1/files/file-uuid-1/download"))
@@ -1256,7 +1245,7 @@ func TestRouter_GetFile_JSONStructure(t *testing.T) {
 	expectAuthLookup(mock, testToken)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-uuid-1", testTenantID, "sess-1", "exec-1",
 				"result.json", "application/json", int64(512),

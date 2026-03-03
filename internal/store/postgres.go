@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -10,13 +11,33 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+// DBTX is the common interface satisfied by both *sql.DB and *sql.Tx.
+// Store methods use this internally so they work inside transactions
+// without code changes.
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
 // Store wraps a PostgreSQL connection pool and provides data-access methods
-// for the Skillbox runtime.
+// for the Skillbox runtime. When tx is set (via RunInTx), all queries go
+// through the transaction instead of the pool.
 type Store struct {
 	db *sql.DB
+	tx *sql.Tx
+}
+
+// conn returns the active DBTX — the transaction if inside RunInTx,
+// otherwise the connection pool.
+func (s *Store) conn() DBTX {
+	if s.tx != nil {
+		return s.tx
+	}
+	return s.db
 }
 
 // New opens a connection pool to PostgreSQL using the provided DSN,
@@ -56,6 +77,29 @@ func (s *Store) Close() error {
 // DB returns the underlying *sql.DB for use in tests or advanced queries.
 func (s *Store) DB() *sql.DB {
 	return s.db
+}
+
+// RunInTx executes fn inside a database transaction. If fn returns a
+// non-nil error the transaction is rolled back; otherwise it is committed.
+// The Store passed to fn shares the same transaction so all its methods
+// operate atomically.
+func (s *Store) RunInTx(ctx context.Context, fn func(tx *Store) error) error {
+	txn, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+
+	txStore := &Store{db: s.db, tx: txn}
+
+	if err := fn(txStore); err != nil {
+		_ = txn.Rollback()
+		return err
+	}
+
+	if err := txn.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }
 
 // migrate runs embedded SQL migrations using goose. On first run after

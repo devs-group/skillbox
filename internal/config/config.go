@@ -35,7 +35,9 @@ type Config struct {
 	DefaultTimeout         time.Duration
 	MaxTimeout             time.Duration
 	DefaultMemory          int64   // bytes
+	MaxMemory              int64   // bytes — hard cap for skill-specified memory
 	DefaultCPU             float64 // fractional CPU (e.g. 0.5 = half a core)
+	MaxCPU                 float64 // hard cap for skill-specified CPU
 	MaxOutputSize          int64   // bytes
 	MaxSkillSize           int64   // bytes
 	MaxConcurrentExecs     int     // max parallel sandbox executions
@@ -47,16 +49,24 @@ type Config struct {
 	LogLevel          string
 }
 
+// defaultMemoryStr and defaultCPUStr store the raw string values from
+// environment variables, set during Load(). Used to pass the original
+// format to OpenSandbox without re-reading the environment.
+var (
+	defaultMemoryStr = "256Mi"
+	defaultCPUStr    = "500m"
+)
+
 // DefaultMemoryStr returns the default memory limit as a Kubernetes-style
 // string suitable for passing to OpenSandbox (e.g. "256Mi").
 func (c *Config) DefaultMemoryStr() string {
-	return envOrDefault("SKILLBOX_DEFAULT_MEMORY", "256Mi")
+	return defaultMemoryStr
 }
 
 // DefaultCPUStr returns the default CPU limit as a string suitable for
 // passing to OpenSandbox (e.g. "500m" for 0.5 cores).
 func (c *Config) DefaultCPUStr() string {
-	return envOrDefault("SKILLBOX_DEFAULT_CPU", "500m")
+	return defaultCPUStr
 }
 
 // Load reads configuration from environment variables, validates required
@@ -133,19 +143,40 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SKILLBOX_DEFAULT_TIMEOUT (%s) exceeds SKILLBOX_MAX_TIMEOUT (%s)", cfg.DefaultTimeout, cfg.MaxTimeout)
 	}
 
-	// Memory
-	cfg.DefaultMemory, err = ParseMemory(envOrDefault("SKILLBOX_DEFAULT_MEMORY", "256Mi"))
+	// Memory — also store the raw string for passing to OpenSandbox.
+	defaultMemoryStr = envOrDefault("SKILLBOX_DEFAULT_MEMORY", "256Mi")
+	cfg.DefaultMemory, err = ParseMemory(defaultMemoryStr)
 	if err != nil {
 		return nil, fmt.Errorf("SKILLBOX_DEFAULT_MEMORY: %w", err)
 	}
 
-	// CPU
-	cfg.DefaultCPU, err = strconv.ParseFloat(envOrDefault("SKILLBOX_DEFAULT_CPU", "0.5"), 64)
+	cfg.MaxMemory, err = ParseMemory(envOrDefault("SKILLBOX_MAX_MEMORY", "1Gi"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_MAX_MEMORY: %w", err)
+	}
+	if cfg.DefaultMemory > cfg.MaxMemory {
+		return nil, fmt.Errorf("SKILLBOX_DEFAULT_MEMORY (%d) exceeds SKILLBOX_MAX_MEMORY (%d)", cfg.DefaultMemory, cfg.MaxMemory)
+	}
+
+	// CPU — also store the raw string for passing to OpenSandbox.
+	defaultCPUStr = envOrDefault("SKILLBOX_DEFAULT_CPU", "0.5")
+	cfg.DefaultCPU, err = strconv.ParseFloat(defaultCPUStr, 64)
 	if err != nil {
 		return nil, fmt.Errorf("SKILLBOX_DEFAULT_CPU: %w", err)
 	}
 	if cfg.DefaultCPU <= 0 {
 		return nil, fmt.Errorf("SKILLBOX_DEFAULT_CPU must be positive, got %f", cfg.DefaultCPU)
+	}
+
+	cfg.MaxCPU, err = strconv.ParseFloat(envOrDefault("SKILLBOX_MAX_CPU", "4.0"), 64)
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_MAX_CPU: %w", err)
+	}
+	if cfg.MaxCPU <= 0 {
+		return nil, fmt.Errorf("SKILLBOX_MAX_CPU must be positive, got %f", cfg.MaxCPU)
+	}
+	if cfg.DefaultCPU > cfg.MaxCPU {
+		return nil, fmt.Errorf("SKILLBOX_DEFAULT_CPU (%f) exceeds SKILLBOX_MAX_CPU (%f)", cfg.DefaultCPU, cfg.MaxCPU)
 	}
 
 	// Max output size

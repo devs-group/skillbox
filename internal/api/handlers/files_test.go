@@ -176,7 +176,7 @@ func TestGetFile_ReturnsSingleFile(t *testing.T) {
 	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(handlerFileColumns).
 			AddRow("file-uuid-1", "tenant-1", "sess-1", "exec-1", "report.csv", "text/csv",
 				int64(1024), "key1", 1, nil, now, now))
@@ -215,7 +215,7 @@ func TestGetFile_NotFound(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(handlerFileColumns))
 
 	w := httptest.NewRecorder()
@@ -240,14 +240,11 @@ func TestGetFile_TenantIsolation(t *testing.T) {
 	h, mock, cleanup := newTestFilesHandler(t)
 	defer cleanup()
 
-	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
-
 	// The file belongs to tenant-2 but the caller is tenant-1.
+	// With tenant_id in the SQL WHERE clause, the query returns no rows.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
-		WillReturnRows(sqlmock.NewRows(handlerFileColumns).
-			AddRow("file-uuid-1", "tenant-2", nil, nil, "secret.txt", "text/plain",
-				int64(100), "key1", 1, nil, now, now))
+		WithArgs("file-uuid-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows(handlerFileColumns))
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -295,14 +292,14 @@ func TestDeleteFile_Returns204(t *testing.T) {
 
 	// First: GetFile to verify ownership.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(handlerFileColumns).
 			AddRow("file-uuid-1", "tenant-1", nil, nil, "doomed.txt", "text/plain",
 				int64(50), "key1", 1, nil, now, now))
 
-	// Second: DeleteFile by ID.
+	// Second: DeleteFile by ID and tenant.
 	mock.ExpectExec("DELETE FROM sandbox.files").
-		WithArgs("file-uuid-1").
+		WithArgs("file-uuid-1", "tenant-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Use a gin router so the response status is properly flushed to the
@@ -334,7 +331,7 @@ func TestDeleteFile_NotFound(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("missing-uuid").
+		WithArgs("missing-uuid", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(handlerFileColumns))
 
 	w := httptest.NewRecorder()
@@ -359,14 +356,11 @@ func TestDeleteFile_TenantIsolation(t *testing.T) {
 	h, mock, cleanup := newTestFilesHandler(t)
 	defer cleanup()
 
-	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
-
 	// File belongs to tenant-2, but caller is tenant-1.
+	// With tenant_id in the SQL WHERE clause, the query returns no rows.
 	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
-		WithArgs("file-uuid-1").
-		WillReturnRows(sqlmock.NewRows(handlerFileColumns).
-			AddRow("file-uuid-1", "tenant-2", nil, nil, "nope.txt", "text/plain",
-				int64(10), "key1", 1, nil, now, now))
+		WithArgs("file-uuid-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows(handlerFileColumns))
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

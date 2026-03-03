@@ -21,7 +21,7 @@ type SkillRecord struct {
 // UpsertSkill inserts or updates a skill metadata record. On conflict
 // (same tenant, name, version) it updates the description and lang.
 func (s *Store) UpsertSkill(ctx context.Context, rec *SkillRecord) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.conn().ExecContext(ctx, `
 		INSERT INTO sandbox.skills (tenant_id, name, version, description, lang)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (tenant_id, name, version)
@@ -38,7 +38,7 @@ func (s *Store) UpsertSkill(ctx context.Context, rec *SkillRecord) error {
 // ListSkills returns all skill metadata for a tenant, ordered by name
 // then version.
 func (s *Store) ListSkills(ctx context.Context, tenantID string) ([]SkillRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.conn().QueryContext(ctx, `
 		SELECT tenant_id, name, version, description, lang, uploaded_at
 		FROM sandbox.skills
 		WHERE tenant_id = $1
@@ -68,7 +68,7 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string) ([]SkillRecord,
 // GetSkill retrieves a single skill metadata record by tenant, name, and version.
 func (s *Store) GetSkill(ctx context.Context, tenantID, name, version string) (*SkillRecord, error) {
 	rec := &SkillRecord{}
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		SELECT tenant_id, name, version, description, lang, uploaded_at
 		FROM sandbox.skills
 		WHERE tenant_id = $1 AND name = $2 AND version = $3
@@ -90,7 +90,7 @@ func (s *Store) GetSkill(ctx context.Context, tenantID, name, version string) (*
 // returns ErrNotFound.
 func (s *Store) ResolveLatestVersion(ctx context.Context, tenantID, name string) (string, error) {
 	var version string
-	err := s.db.QueryRowContext(ctx, `
+	err := s.conn().QueryRowContext(ctx, `
 		SELECT version FROM sandbox.skills
 		WHERE tenant_id = $1 AND name = $2
 		ORDER BY uploaded_at DESC
@@ -107,7 +107,7 @@ func (s *Store) ResolveLatestVersion(ctx context.Context, tenantID, name string)
 
 // DeleteSkill removes a skill metadata record.
 func (s *Store) DeleteSkill(ctx context.Context, tenantID, name, version string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.conn().ExecContext(ctx, `
 		DELETE FROM sandbox.skills
 		WHERE tenant_id = $1 AND name = $2 AND version = $3
 	`, tenantID, name, version)
