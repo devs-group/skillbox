@@ -18,6 +18,7 @@ import (
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/sandbox"
+	"github.com/devs-group/skillbox/internal/skill"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -28,6 +29,7 @@ type RunRequest struct {
 	Input      json.RawMessage   `json:"input"`
 	Env        map[string]string `json:"env,omitempty"`
 	InputFiles []string          `json:"input_files,omitempty"` // file IDs from POST /v1/files
+	Entrypoint string            `json:"entrypoint,omitempty"` // override the skill's default entrypoint
 	TenantID   string            `json:"-"`
 }
 
@@ -323,8 +325,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		return result, nil
 	}
 
-	// Step 10: If the skill has no entrypoint, generate one that executes the
-	// LLM's input as Python code. This makes library-style skills (core/*.py
+	// Step 10a: Allow the caller to override the entrypoint via RunRequest.
+	if req.Entrypoint != "" {
+		loadedSkill.Entrypoint = req.Entrypoint
+		if loadedSkill.Skill.Lang == "" {
+			loadedSkill.Skill.Lang = skill.InferLangFromEntrypoint(req.Entrypoint)
+		}
+	}
+
+	// Step 10b: If the skill still has no entrypoint, generate one that executes
+	// the LLM's input as Python code. This makes library-style skills (core/*.py
 	// with SKILL.md instructions) work the same way as in Claude's web UI —
 	// the LLM writes code using the skill's utilities, and the runner
 	// executes it.

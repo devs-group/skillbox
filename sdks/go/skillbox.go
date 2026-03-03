@@ -74,6 +74,12 @@ type RunRequest struct {
 	// InputFiles lists file IDs (from POST /v1/files) to inject into the
 	// sandbox at /sandbox/input/<filename> before execution.
 	InputFiles []string `json:"input_files,omitempty"`
+
+	// Entrypoint overrides the skill's default entrypoint script. When set,
+	// the runner executes this file instead of the one detected in the archive
+	// (e.g. "analysis.py" instead of "main.py"). The path is relative to the
+	// skill's root directory.
+	Entrypoint string `json:"entrypoint,omitempty"`
 }
 
 // RunResult is the response returned after a skill execution completes.

@@ -1,0 +1,64 @@
+{
+  "tasks": {
+    "task-1772535136035-sc8dcp": {
+      "taskId": "task-1772535136035-sc8dcp",
+      "type": "refactoring",
+      "description": "Replace Docker Runner with OpenSandbox in Skillbox",
+      "priority": "normal",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [],
+      "tags": [],
+      "createdAt": "2026-03-03T10:52:16.035Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1772535796178-0dqlvi": {
+      "taskId": "task-1772535796178-0dqlvi",
+      "type": "refactor",
+      "description": "Replace Docker Runner with OpenSandbox in Skillbox. Replace internal/runner/runner.go Docker SDK calls with OpenSandbox REST API (POST /v1/sandboxes, ExecD API). Create OpenSandbox client, update config, update docker-compose.yml, preserve all 11 security layers, write unit and integration tests.",
+      "priority": "high",
+      "status": "in_progress",
+      "progress": 85,
+      "assignedTo": [
+        "arch-opensandbox",
+        "coder-opensandbox-client",
+        "tester-opensandbox",
+        "reviewer-security"
+      ],
+      "tags": [
+        "opensandbox",
+        "runner",
+        "integration",
+        "docker-replacement"
+      ],
+      "createdAt": "2026-03-03T11:03:16.178Z",
+      "startedAt": "2026-03-03T11:03:33.156Z",
+      "completedAt": null
+    },
+    "task-1772536103557-4qcnmg": {
+      "taskId": "task-1772536103557-4qcnmg",
+      "type": "feature",
+      "description": "Artifact Persistence & Cross-Session File Editing (Claude Web UI behavior)\n\nRequirements:\n1. FILES GENERATED IN SESSION ARE PERSISTENT - When a skill execution produces files (PDFs, images, code, data files), they must be stored persistently, not just in ephemeral sandbox storage.\n\n2. IN-SESSION EDITING - Generated files (e.g. a PDF, a script, a dataset) should be editable within the same session. User can modify the file and re-run or download the updated version.\n\n3. CROSS-SESSION PERSISTENCE - When a user logs out and logs back in, all previously generated files from past sessions must still be visible, accessible, and editable. Files are tied to user/tenant + execution history.\n\n4. SESSION-FILE ASSOCIATION - Each file is linked to the session/execution that created it, so users can browse their history and find artifacts from past runs.\n\nImplementation approach:\n- Store generated artifacts in MinIO (S3) with metadata linking to tenant, session, execution\n- Add a file management API: GET /files (list), GET /files/{id} (download), PUT /files/{id} (update/edit), DELETE /files/{id}\n- Add session persistence: store session metadata in PostgreSQL with references to artifact paths in MinIO\n- OpenSandbox integration: after skill execution, download artifacts from sandbox and persist to MinIO before destroying the sandbox\n- Add file versioning: when a file is edited, store as a new version while keeping history\n- Frontend contract: API returns file metadata (name, type, size, created_at, session_id, execution_id, versions) for UI to render like Claude web artifacts\n\nThis is a sub-task of the OpenSandbox integration — artifacts downloaded from OpenSandbox sandboxes must flow into this persistence layer.",
+      "priority": "high",
+      "status": "in_progress",
+      "progress": 0,
+      "assignedTo": [
+        "coder-opensandbox-client",
+        "tester-opensandbox"
+      ],
+      "tags": [
+        "persistence",
+        "artifacts",
+        "files",
+        "cross-session",
+        "editing",
+        "claude-ui-parity"
+      ],
+      "createdAt": "2026-03-03T11:08:23.557Z",
+      "startedAt": "2026-03-03T11:20:54.090Z",
+      "completedAt": null
+    }
+  },
+  "version": "3.0.0"
+}
