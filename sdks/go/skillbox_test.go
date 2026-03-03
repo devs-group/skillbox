@@ -143,6 +143,58 @@ func TestRun_Success(t *testing.T) {
 }
 
 // --------------------------------------------------------------------
+// TestRun_WithInputFiles — verifies input_files are serialized in the request
+// --------------------------------------------------------------------
+
+func TestRun_WithInputFiles(t *testing.T) {
+	want := RunResult{
+		ExecutionID: "exec-with-files",
+		Status:      "completed",
+		Output:      json.RawMessage(`{"processed": true}`),
+		DurationMs:  800,
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req RunRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if req.Skill != "xlsx" {
+			t.Errorf("expected skill xlsx, got %s", req.Skill)
+		}
+		if len(req.InputFiles) != 2 {
+			t.Fatalf("expected 2 input_files, got %d", len(req.InputFiles))
+		}
+		if req.InputFiles[0] != "file-id-aaa" {
+			t.Errorf("InputFiles[0] = %q, want %q", req.InputFiles[0], "file-id-aaa")
+		}
+		if req.InputFiles[1] != "file-id-bbb" {
+			t.Errorf("InputFiles[1] = %q, want %q", req.InputFiles[1], "file-id-bbb")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, "sk-test", WithTenant("tenant-1"))
+	result, err := client.Run(context.Background(), RunRequest{
+		Skill:      "xlsx",
+		Input:      json.RawMessage(`{"action": "update"}`),
+		InputFiles: []string{"file-id-aaa", "file-id-bbb"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExecutionID != want.ExecutionID {
+		t.Errorf("ExecutionID: got %q, want %q", result.ExecutionID, want.ExecutionID)
+	}
+	if result.Status != want.Status {
+		t.Errorf("Status: got %q, want %q", result.Status, want.Status)
+	}
+}
+
+// --------------------------------------------------------------------
 // TestRun_FailedExecution
 // --------------------------------------------------------------------
 
@@ -1030,6 +1082,89 @@ func TestListFileVersions(t *testing.T) {
 	}
 	if versions[1].SizeBytes != 12000 {
 		t.Errorf("versions[1].SizeBytes: got %d, want 12000", versions[1].SizeBytes)
+	}
+}
+
+// --------------------------------------------------------------------
+// TestClient_UploadFileFromReader
+// --------------------------------------------------------------------
+
+func TestClient_UploadFileFromReader(t *testing.T) {
+	want := FileInfo{
+		ID:          "test-file-123",
+		TenantID:    "t1",
+		Name:        "test.xlsx",
+		ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		SizeBytes:   1024,
+		S3Key:       "t1/uploads/xxx/test.xlsx",
+		Version:     1,
+	}
+
+	testContent := []byte("fake-xlsx-content")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/files" {
+			t.Errorf("expected path /v1/files, got %s", r.URL.Path)
+		}
+
+		ct := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "multipart/form-data") {
+			t.Errorf("expected Content-Type to start with multipart/form-data, got %q", ct)
+		}
+
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("get form file: %v", err)
+		}
+		defer file.Close()
+
+		if header.Filename != "test.xlsx" {
+			t.Errorf("expected filename test.xlsx, got %q", header.Filename)
+		}
+
+		data, _ := io.ReadAll(file)
+		if string(data) != string(testContent) {
+			t.Errorf("unexpected file content: %q", string(data))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, "sk-test")
+	result, err := client.UploadFileFromReader(context.Background(), "test.xlsx", bytes.NewReader(testContent))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.ID != want.ID {
+		t.Errorf("ID: got %q, want %q", result.ID, want.ID)
+	}
+	if result.Name != want.Name {
+		t.Errorf("Name: got %q, want %q", result.Name, want.Name)
+	}
+}
+
+func TestClient_UploadFileFromReader_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"internal","message":"storage unavailable"}`)
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, "sk-test")
+	_, err := client.UploadFileFromReader(context.Background(), "test.xlsx", bytes.NewReader([]byte("content")))
+	if err == nil {
+		t.Fatal("expected error for server failure, got nil")
 	}
 }
 

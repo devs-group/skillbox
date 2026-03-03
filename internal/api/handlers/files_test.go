@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"testing"
 	"time"
 
@@ -376,5 +379,81 @@ func TestDeleteFile_TenantIsolation(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// --- POST /v1/files (Upload) ---
+
+func TestUpload_MissingFileField(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _, cleanup := newTestFilesHandler(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	// No body at all — c.Request.FormFile("file") will return an error.
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/files", nil)
+	setTenantID(c, "tenant-1")
+
+	h.Upload(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if resp["error"] != "bad_request" {
+		t.Errorf("error = %q, want %q", resp["error"], "bad_request")
+	}
+}
+
+func TestUpload_MissingFileName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _, cleanup := newTestFilesHandler(t)
+	defer cleanup()
+
+	// Build a multipart body with a "file" part whose Content-Disposition
+	// carries an empty filename. This passes the FormFile("file") check but
+	// causes the name-resolution logic to fall through to the 400 branch,
+	// because both the "name" form field and header.Filename are empty.
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+
+	// Craft the part header manually so the filename is explicitly empty.
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Disposition", `form-data; name="file"; filename=""`)
+	partHeader.Set("Content-Type", "application/octet-stream")
+	part, err := mw.CreatePart(partHeader)
+	if err != nil {
+		t.Fatalf("failed to create multipart part: %v", err)
+	}
+	// Write minimal content so the part is well-formed.
+	if _, err = part.Write([]byte("data")); err != nil {
+		t.Fatalf("failed to write part content: %v", err)
+	}
+	mw.Close()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/v1/files", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	c.Request = req
+	setTenantID(c, "tenant-1")
+
+	h.Upload(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if resp["error"] != "bad_request" {
+		t.Errorf("error = %q, want %q", resp["error"], "bad_request")
 	}
 }

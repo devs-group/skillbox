@@ -212,9 +212,35 @@ func TestBuildUploadFiles_EmptyDir(t *testing.T) {
 		t.Fatalf("buildUploadFiles: %v", err)
 	}
 
-	// Should contain exactly: input.json + 2 .keep placeholders = 3 files.
-	if len(files) != 3 {
-		t.Errorf("expected 3 files for empty skill dir, got %d", len(files))
+	// Should contain exactly: input.json + 3 .keep placeholders (out/files, out/logs, input) = 4 files.
+	if len(files) != 4 {
+		t.Errorf("expected 4 files for empty skill dir, got %d", len(files))
+	}
+}
+
+func TestBuildUploadFiles_IncludesInputPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	inputJSON := json.RawMessage(`{}`)
+
+	files, err := buildUploadFiles(dir, inputJSON)
+	if err != nil {
+		t.Fatalf("buildUploadFiles: %v", err)
+	}
+
+	byPath := make(map[string]sandbox.FileUpload)
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+
+	keepInput, ok := byPath["/sandbox/input/.keep"]
+	if !ok {
+		t.Fatal("missing /sandbox/input/.keep in upload list")
+	}
+	if len(keepInput.Content) != 0 {
+		t.Errorf("input/.keep should be empty, got %d bytes", len(keepInput.Content))
+	}
+	if keepInput.Mode != 0o644 {
+		t.Errorf("input/.keep mode = %#o, want %#o", keepInput.Mode, 0o644)
 	}
 }
 
