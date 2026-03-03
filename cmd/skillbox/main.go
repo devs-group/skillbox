@@ -29,7 +29,7 @@ var (
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err) //nolint:errcheck
 		os.Exit(1)
 	}
 }
@@ -217,11 +217,11 @@ func newRunCmd() *cobra.Command {
 			}
 
 			if download != "" && result.HasFiles() {
-				fmt.Fprintf(os.Stderr, "Downloading files to %s...\n", download)
+				fmt.Fprintf(os.Stderr, "Downloading files to %s...\n", download) //nolint:errcheck
 				if err := client.DownloadFiles(ctx, result, download); err != nil {
 					return fmt.Errorf("download files: %w", err)
 				}
-				fmt.Fprintf(os.Stderr, "Files downloaded to %s\n", download)
+				fmt.Fprintf(os.Stderr, "Files downloaded to %s\n", download) //nolint:errcheck
 			}
 
 			return nil

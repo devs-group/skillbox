@@ -49,7 +49,7 @@ func main() {
 		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Initialize skill registry (MinIO)
 	reg, err := registry.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3BucketSkills, cfg.S3UseSSL)

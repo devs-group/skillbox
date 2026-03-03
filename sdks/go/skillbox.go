@@ -339,7 +339,7 @@ func (c *Client) RegisterSkill(ctx context.Context, zipPath string) error {
 	if err != nil {
 		return fmt.Errorf("skillbox: register skill: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	// Check the writer goroutine for errors.
 	if writeErr := <-errCh; writeErr != nil {
@@ -359,7 +359,7 @@ func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var skills []Skill
 	if err := c.decodeResponse(resp, &skills); err != nil {
@@ -376,7 +376,7 @@ func (c *Client) GetSkill(ctx context.Context, name, version string) (*SkillDeta
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var detail SkillDetail
 	if err := c.decodeResponse(resp, &detail); err != nil {
@@ -392,7 +392,7 @@ func (c *Client) DeleteSkill(ctx context.Context, name, version string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
@@ -410,7 +410,7 @@ func (c *Client) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return c.parseAPIError(resp)
@@ -440,7 +440,7 @@ func (c *Client) DownloadFiles(ctx context.Context, result *RunResult, destDir s
 	if err != nil {
 		return fmt.Errorf("skillbox: download files: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("skillbox: download files: HTTP %d", resp.StatusCode)
@@ -480,7 +480,7 @@ func (c *Client) ListFiles(ctx context.Context, filter FileFilter) ([]FileInfo, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var files []FileInfo
 	if err := c.decodeResponse(resp, &files); err != nil {
@@ -495,7 +495,7 @@ func (c *Client) GetFile(ctx context.Context, id string) (*FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var file FileInfo
 	if err := c.decodeResponse(resp, &file); err != nil {
@@ -521,7 +521,7 @@ func (c *Client) DownloadFile(ctx context.Context, id, destPath string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return c.parseAPIError(resp)
@@ -583,7 +583,7 @@ func (c *Client) UpdateFile(ctx context.Context, id, filePath string) (*FileInfo
 	if err != nil {
 		return nil, fmt.Errorf("skillbox: update file: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if writeErr := <-errCh; writeErr != nil {
 		return nil, fmt.Errorf("skillbox: write multipart body: %w", writeErr)
@@ -603,7 +603,7 @@ func (c *Client) DeleteFile(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
@@ -653,7 +653,7 @@ func (c *Client) UploadFile(ctx context.Context, filePath string) (*FileInfo, er
 	if err != nil {
 		return nil, fmt.Errorf("skillbox: upload file: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if writeErr := <-errCh; writeErr != nil {
 		return nil, fmt.Errorf("skillbox: write multipart body: %w", writeErr)
@@ -698,7 +698,7 @@ func (c *Client) UploadFileFromReader(ctx context.Context, filename string, r io
 	if err != nil {
 		return nil, fmt.Errorf("skillbox: upload file: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if writeErr := <-errCh; writeErr != nil {
 		return nil, fmt.Errorf("skillbox: write multipart body: %w", writeErr)
@@ -718,7 +718,7 @@ func (c *Client) ListFileVersions(ctx context.Context, id string) ([]FileInfo, e
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var versions []FileInfo
 	if err := c.decodeResponse(resp, &versions); err != nil {

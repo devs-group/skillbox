@@ -309,7 +309,7 @@ func (c *Client) SearchFiles(ctx context.Context, execdURL, dir, pattern string)
 	if err != nil {
 		return nil, fmt.Errorf("opensandbox: search files: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.errStatus("search files", resp)
 	}
@@ -349,7 +349,7 @@ func (c *Client) lcDo(ctx context.Context, method, path string, params url.Value
 	if err != nil {
 		return fmt.Errorf("opensandbox: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != expect {
 		return c.errStatus(method+" "+path, resp)
 	}

@@ -150,7 +150,7 @@ func TestGetSandbox_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/nonexistent", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "sandbox not found")
+		fmt.Fprint(w, "sandbox not found") //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -168,7 +168,7 @@ func TestGetSandbox_EscapesID(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/id%2Fwith%2Fslash", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("id/with/slash", "Running"))
+		fmt.Fprint(w, sandboxJSON("id/with/slash", "Running")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -234,7 +234,7 @@ func TestListSandboxes_Empty(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "[]")
+		fmt.Fprint(w, "[]") //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -273,7 +273,7 @@ func TestDeleteSandbox_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-gone", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "not found")
+		fmt.Fprint(w, "not found") //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -360,7 +360,7 @@ func TestDiscoverExecD_Error(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-exec/endpoints/44772", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "endpoint not found")
+		fmt.Fprint(w, "endpoint not found") //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -379,7 +379,7 @@ func TestWaitReady_AlreadyRunning(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-run", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("sb-run", "Running"))
+		fmt.Fprint(w, sandboxJSON("sb-run", "Running")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -403,7 +403,7 @@ func TestWaitReady_TransitionsToRunning(t *testing.T) {
 			state = "Running"
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("sb-wait", state))
+		fmt.Fprint(w, sandboxJSON("sb-wait", state)) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -424,7 +424,7 @@ func TestWaitReady_FailedState(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-fail", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("sb-fail", "Failed"))
+		fmt.Fprint(w, sandboxJSON("sb-fail", "Failed")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -445,7 +445,7 @@ func TestWaitReady_TerminatedState(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-term", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("sb-term", "Terminated"))
+		fmt.Fprint(w, sandboxJSON("sb-term", "Terminated")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -463,7 +463,7 @@ func TestWaitReady_ContextTimeout(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sandboxes/sb-slow", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sandboxJSON("sb-slow", "Pending"))
+		fmt.Fprint(w, sandboxJSON("sb-slow", "Pending")) //nolint:errcheck
 	})
 
 	_, cl := newTestServer(t, mux)
@@ -493,9 +493,9 @@ func TestPing_Success(t *testing.T) {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "pong")
+		fmt.Fprint(w, "pong") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -508,9 +508,9 @@ func TestPing_Success(t *testing.T) {
 func TestPing_ErrorStatus(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(w, "not ready")
+		fmt.Fprint(w, "not ready") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -530,7 +530,7 @@ func TestPing_TrailingSlashTrimmed(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -609,7 +609,7 @@ func TestUploadFiles_Success(t *testing.T) {
 
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -626,7 +626,7 @@ func TestUploadFiles_AcceptsCreated(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -642,7 +642,7 @@ func TestUploadFiles_AcceptsNoContent(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -657,9 +657,9 @@ func TestUploadFiles_AcceptsNoContent(t *testing.T) {
 func TestUploadFiles_ServerError(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "disk full")
+		fmt.Fprint(w, "disk full") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -714,9 +714,9 @@ func TestRunCommand_BareJSON(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sseBody)
+		fmt.Fprint(w, sseBody) //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -752,9 +752,9 @@ func TestRunCommand_DataPrefixed(t *testing.T) {
 
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, sseBody)
+		fmt.Fprint(w, sseBody) //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -779,9 +779,9 @@ func TestRunCommand_DataPrefixed(t *testing.T) {
 func TestRunCommand_ServerError(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, "bad command")
+		fmt.Fprint(w, "bad command") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -807,9 +807,9 @@ func TestDownloadFile_Success(t *testing.T) {
 			t.Errorf("path param = %q, want /app/output.txt", r.URL.Query().Get("path"))
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "file content here")
+		fmt.Fprint(w, "file content here") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -831,9 +831,9 @@ func TestDownloadFile_Success(t *testing.T) {
 func TestDownloadFile_NotFound(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "file not found")
+		fmt.Fprint(w, "file not found") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -869,7 +869,7 @@ func TestSearchFiles_Success(t *testing.T) {
 			{Path: "/app/util.py", Size: 128, ModifiedAt: now},
 		})
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -897,9 +897,9 @@ func TestSearchFiles_Success(t *testing.T) {
 func TestSearchFiles_Empty(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "[]")
+		fmt.Fprint(w, "[]") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -915,9 +915,9 @@ func TestSearchFiles_Empty(t *testing.T) {
 func TestSearchFiles_ServerError(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "search failed")
+		fmt.Fprint(w, "search failed") //nolint:errcheck
 	}))
-	defer execd.Close()
+	defer execd.Close() //nolint:errcheck
 
 	cl := New("http://unused", "key", execd.Client())
 
@@ -954,7 +954,7 @@ func TestErrorHandling_NonExpectedStatusCodes(t *testing.T) {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/sandboxes/sb-err", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
-				fmt.Fprint(w, tt.body)
+				fmt.Fprint(w, tt.body) //nolint:errcheck
 			})
 
 			_, cl := newTestServer(t, mux)

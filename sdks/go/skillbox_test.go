@@ -108,7 +108,7 @@ func TestRun_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test", WithTenant("tenant-1"))
 	result, err := client.Run(context.Background(), RunRequest{
@@ -175,7 +175,7 @@ func TestRun_WithInputFiles(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test", WithTenant("tenant-1"))
 	result, err := client.Run(context.Background(), RunRequest{
@@ -208,7 +208,7 @@ func TestRun_FailedExecution(t *testing.T) {
 			DurationMs:  200,
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	result, err := client.Run(context.Background(), RunRequest{Skill: "broken-skill"})
@@ -278,7 +278,7 @@ func TestListSkills(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	skills, err := client.ListSkills(context.Background())
@@ -315,7 +315,7 @@ func TestHealth(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, `{"status":"ok"}`) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "")
 		if err := client.Health(context.Background()); err != nil {
@@ -329,7 +329,7 @@ func TestHealth(t *testing.T) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, `{"error":"unavailable","message":"database down"}`) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "")
 		err := client.Health(context.Background())
@@ -372,7 +372,7 @@ func TestGetExecution(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	result, err := client.GetExecution(context.Background(), "exec-get-789")
@@ -402,7 +402,7 @@ func TestGetExecutionLogs(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"logs": wantLogs})
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		logs, err := client.GetExecutionLogs(context.Background(), "exec-logs-1")
@@ -419,7 +419,7 @@ func TestGetExecutionLogs(t *testing.T) {
 			w.Header().Set("Content-Type", "text/plain")
 			fmt.Fprint(w, wantLogs) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		logs, err := client.GetExecutionLogs(context.Background(), "exec-logs-2")
@@ -456,7 +456,7 @@ func TestDownloadFiles(t *testing.T) {
 			w.Header().Set("Content-Type", "application/gzip")
 			_, _ = w.Write(archive)
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New("http://unused", "sk-test")
 		result := &RunResult{
@@ -482,7 +482,7 @@ func TestDownloadFiles(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(archive)
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New("http://unused", "sk-test")
 		result := &RunResult{FilesURL: srv.URL + "/evil.tar.gz"}
@@ -506,9 +506,9 @@ func TestAPIError(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			fmt.Fprint(w, `{"error":"invalid_request","message":"skill field is required"}`)
+			fmt.Fprint(w, `{"error":"invalid_request","message":"skill field is required"}`) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		_, err := client.Run(context.Background(), RunRequest{})
@@ -539,9 +539,9 @@ func TestAPIError(t *testing.T) {
 	t.Run("unstructured_error", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "internal server error")
+			fmt.Fprint(w, "internal server error") //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		_, err := client.ListSkills(context.Background())
@@ -616,7 +616,7 @@ func TestRegisterSkill(t *testing.T) {
 
 		w.WriteHeader(http.StatusCreated)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	// Create a temporary zip file.
 	tmpFile := filepath.Join(t.TempDir(), "test-skill.zip")
@@ -697,7 +697,7 @@ func TestListFiles(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(want)
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test", WithTenant("tenant-1"))
 		files, err := client.ListFiles(context.Background(), FileFilter{
@@ -731,7 +731,7 @@ func TestListFiles(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode([]FileInfo{})
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		files, err := client.ListFiles(context.Background(), FileFilter{})
@@ -772,7 +772,7 @@ func TestGetFile(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(want)
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		file, err := client.GetFile(context.Background(), "file-abc-123")
@@ -794,9 +794,9 @@ func TestGetFile(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not_found","message":"file not found"}`)
+			fmt.Fprint(w, `{"error":"not_found","message":"file not found"}`) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		_, err := client.GetFile(context.Background(), "nonexistent")
@@ -832,9 +832,9 @@ func TestDownloadFile(t *testing.T) {
 				t.Errorf("expected path /v1/files/file-dl-1/download, got %s", r.URL.Path)
 			}
 			w.Header().Set("Content-Type", "application/octet-stream")
-			fmt.Fprint(w, wantContent)
+			fmt.Fprint(w, wantContent) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		destPath := filepath.Join(t.TempDir(), "downloaded.txt")
@@ -848,9 +848,9 @@ func TestDownloadFile(t *testing.T) {
 	t.Run("creates_parent_dirs", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/octet-stream")
-			fmt.Fprint(w, "nested content")
+			fmt.Fprint(w, "nested content") //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		destPath := filepath.Join(t.TempDir(), "sub", "dir", "file.txt")
@@ -865,9 +865,9 @@ func TestDownloadFile(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, `{"error":"internal","message":"storage unavailable"}`)
+			fmt.Fprint(w, `{"error":"internal","message":"storage unavailable"}`) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		destPath := filepath.Join(t.TempDir(), "wont-exist.txt")
@@ -940,7 +940,7 @@ func TestUpdateFile(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	tmpFile := filepath.Join(t.TempDir(), "update-content.bin")
 	if err := os.WriteFile(tmpFile, []byte("updated-file-bytes"), 0o644); err != nil {
@@ -981,7 +981,7 @@ func TestDeleteFile(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		if err := client.DeleteFile(context.Background(), "file-del-1"); err != nil {
@@ -993,9 +993,9 @@ func TestDeleteFile(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not_found","message":"file not found"}`)
+			fmt.Fprint(w, `{"error":"not_found","message":"file not found"}`) //nolint:errcheck
 		}))
-		defer srv.Close()
+		defer srv.Close() //nolint:errcheck
 
 		client := New(srv.URL, "sk-test")
 		err := client.DeleteFile(context.Background(), "nonexistent")
@@ -1060,7 +1060,7 @@ func TestListFileVersions(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	versions, err := client.ListFileVersions(context.Background(), "file-ver-1")
@@ -1137,7 +1137,7 @@ func TestClient_UploadFileFromReader(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(want)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	result, err := client.UploadFileFromReader(context.Background(), "test.xlsx", bytes.NewReader(testContent))
@@ -1157,9 +1157,9 @@ func TestClient_UploadFileFromReader_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error":"internal","message":"storage unavailable"}`)
+		fmt.Fprint(w, `{"error":"internal","message":"storage unavailable"}`) //nolint:errcheck
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	_, err := client.UploadFileFromReader(context.Background(), "test.xlsx", bytes.NewReader([]byte("content")))

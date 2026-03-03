@@ -395,7 +395,7 @@ func TestPollExecD_ImmediateSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := sandbox.New("http://unused", "", srv.Client())
 
@@ -417,7 +417,7 @@ func TestPollExecD_SucceedsAfterRetries(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := sandbox.New("http://unused", "", srv.Client())
 
@@ -436,7 +436,7 @@ func TestPollExecD_Timeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := sandbox.New("http://unused", "", srv.Client())
 
@@ -455,7 +455,7 @@ func TestPollExecD_ContextCancelled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := sandbox.New("http://unused", "", srv.Client())
 
