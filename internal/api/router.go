@@ -51,6 +51,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 			filesHandler := handlers.NewFilesHandler(s, col[0])
 			files := v1.Group("/files")
 			{
+				files.POST("", filesHandler.Upload)
 				files.GET("", filesHandler.List)
 				files.GET("/:id", filesHandler.Get)
 				files.GET("/:id/download", filesHandler.Download)

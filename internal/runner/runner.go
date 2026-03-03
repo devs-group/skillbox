@@ -23,11 +23,12 @@ import (
 
 // RunRequest describes a skill execution request.
 type RunRequest struct {
-	Skill    string            `json:"skill"`
-	Version  string            `json:"version"`
-	Input    json.RawMessage   `json:"input"`
-	Env      map[string]string `json:"env,omitempty"`
-	TenantID string            `json:"-"`
+	Skill      string            `json:"skill"`
+	Version    string            `json:"version"`
+	Input      json.RawMessage   `json:"input"`
+	Env        map[string]string `json:"env,omitempty"`
+	InputFiles []string          `json:"input_files,omitempty"` // file IDs from POST /v1/files
+	TenantID   string            `json:"-"`
 }
 
 // RunResult holds the outcome of a skill execution.
@@ -207,6 +208,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		"SANDBOX_INPUT":      string(inputJSON),
 		"SANDBOX_OUTPUT":     "/sandbox/out/output.json",
 		"SANDBOX_FILES_DIR":  "/sandbox/out/files/",
+		"SANDBOX_INPUT_DIR":  "/sandbox/input/",
 		"SKILL_INSTRUCTIONS": loadedSkill.Skill.Instructions,
 		"HOME":               "/tmp",
 	}
@@ -288,6 +290,34 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		result.setError(fmt.Sprintf("preparing files for upload: %v", walkErr))
 		return result, nil
 	}
+
+	// Download input files from MinIO and add to sandbox uploads.
+	if len(req.InputFiles) > 0 && r.artifacts != nil {
+		for _, fileID := range req.InputFiles {
+			fileRecord, getErr := r.store.GetFile(ctx, fileID, req.TenantID)
+			if getErr != nil {
+				log.Printf("runner: failed to get input file record %s: %v", fileID, getErr)
+				continue
+			}
+			reader, _, _, dlErr := r.artifacts.DownloadObject(ctx, fileRecord.S3Key)
+			if dlErr != nil {
+				log.Printf("runner: failed to download input file %s: %v", fileID, dlErr)
+				continue
+			}
+			content, readErr := io.ReadAll(io.LimitReader(reader, 100<<20)) // 100MB limit
+			reader.Close()
+			if readErr != nil {
+				log.Printf("runner: failed to read input file %s: %v", fileID, readErr)
+				continue
+			}
+			uploadFiles = append(uploadFiles, sandbox.FileUpload{
+				Path:    "/sandbox/input/" + fileRecord.Name,
+				Content: content,
+				Mode:    0o644,
+			})
+		}
+	}
+
 	if uploadErr := r.sandbox.UploadFiles(execCtx, execdURL, uploadFiles); uploadErr != nil {
 		result.setError(fmt.Sprintf("uploading files to sandbox: %v", uploadErr))
 		return result, nil
@@ -500,7 +530,7 @@ func buildUploadFiles(skillDir string, inputJSON []byte) ([]sandbox.FileUpload, 
 		Mode:    0o644,
 	})
 
-	// Add placeholder files so that output directories exist.
+	// Add placeholder files so that output and input directories exist.
 	files = append(files, sandbox.FileUpload{
 		Path:    "/sandbox/out/.keep",
 		Content: []byte{},
@@ -508,6 +538,11 @@ func buildUploadFiles(skillDir string, inputJSON []byte) ([]sandbox.FileUpload, 
 	})
 	files = append(files, sandbox.FileUpload{
 		Path:    "/sandbox/out/files/.keep",
+		Content: []byte{},
+		Mode:    0o644,
+	})
+	files = append(files, sandbox.FileUpload{
+		Path:    "/sandbox/input/.keep",
 		Content: []byte{},
 		Mode:    0o644,
 	})

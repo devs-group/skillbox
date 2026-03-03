@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/devs-group/skillbox/internal/api/middleware"
 	"github.com/devs-group/skillbox/internal/api/response"
@@ -27,6 +28,59 @@ func NewFilesHandler(st *store.Store, col *artifacts.Collector) *FilesHandler {
 		store:     st,
 		collector: col,
 	}
+}
+
+// Upload handles POST /v1/files.
+// Accepts multipart form with "file" field, uploads to S3, creates DB record.
+func (h *FilesHandler) Upload(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+
+	upload, header, formErr := c.Request.FormFile("file")
+	if formErr != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "missing 'file' field in multipart form")
+		return
+	}
+	defer upload.Close()
+
+	name := c.PostForm("name")
+	if name == "" {
+		name = header.Filename
+	}
+	if name == "" {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "file name is required")
+		return
+	}
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = detectContentType(name)
+	}
+
+	fileUUID := uuid.New().String()
+	s3Key := fmt.Sprintf("%s/uploads/%s/%s", tenantID, fileUUID, name)
+
+	uploadedSize, uploadErr := h.collector.UploadObject(c.Request.Context(), s3Key, upload, header.Size, contentType)
+	if uploadErr != nil {
+		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to upload file to storage")
+		return
+	}
+
+	newFile := &store.File{
+		TenantID:    tenantID,
+		Name:        name,
+		ContentType: contentType,
+		SizeBytes:   uploadedSize,
+		S3Key:       s3Key,
+		Version:     1,
+	}
+
+	created, createErr := h.store.CreateFile(c.Request.Context(), newFile)
+	if createErr != nil {
+		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to create file record")
+		return
+	}
+
+	c.JSON(http.StatusCreated, created)
 }
 
 // List handles GET /v1/files.

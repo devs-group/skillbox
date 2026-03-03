@@ -70,6 +70,10 @@ type RunRequest struct {
 
 	// Env injects additional environment variables into the execution container.
 	Env map[string]string `json:"env,omitempty"`
+
+	// InputFiles lists file IDs (from POST /v1/files) to inject into the
+	// sandbox at /sandbox/input/<filename> before execution.
+	InputFiles []string `json:"input_files,omitempty"`
 }
 
 // RunResult is the response returned after a skill execution completes.
@@ -608,6 +612,103 @@ func (c *Client) DeleteFile(ctx context.Context, id string) error {
 		return c.parseAPIError(resp)
 	}
 	return nil
+}
+
+// UploadFile uploads a new file to the Skillbox server. The file at filePath
+// is sent as a multipart form with field name "file". The server responds
+// with the created [FileInfo] including the assigned ID.
+func (c *Client) UploadFile(ctx context.Context, filePath string) (*FileInfo, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: open file for upload: %w", err)
+	}
+	defer f.Close()
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- writer.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/files", pr)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: create upload request: %w", err)
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: upload file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if writeErr := <-errCh; writeErr != nil {
+		return nil, fmt.Errorf("skillbox: write multipart body: %w", writeErr)
+	}
+
+	var file FileInfo
+	if err := c.decodeResponse(resp, &file); err != nil {
+		return nil, err
+	}
+	return &file, nil
+}
+
+// UploadFileFromReader uploads a file from an io.Reader. This avoids writing
+// to disk when the content is already in memory or streamed from another source.
+func (c *Client) UploadFileFromReader(ctx context.Context, filename string, r io.Reader) (*FileInfo, error) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if _, err := io.Copy(part, r); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- writer.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/files", pr)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: create upload request: %w", err)
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: upload file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if writeErr := <-errCh; writeErr != nil {
+		return nil, fmt.Errorf("skillbox: write multipart body: %w", writeErr)
+	}
+
+	var file FileInfo
+	if err := c.decodeResponse(resp, &file); err != nil {
+		return nil, err
+	}
+	return &file, nil
 }
 
 // ListFileVersions returns all versions of a file, ordered by version
