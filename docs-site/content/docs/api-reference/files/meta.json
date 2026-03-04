@@ -1,0 +1,4 @@
+{
+  "title": "Files",
+  "pages": ["uploadFile", "listFiles", "getFile", "downloadFile", "updateFile", "deleteFile", "listFileVersions"]
+}

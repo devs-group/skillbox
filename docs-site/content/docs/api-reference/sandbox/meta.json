@@ -1,0 +1,4 @@
+{
+  "title": "Sandbox",
+  "pages": ["sandboxExecute", "sandboxReadFile", "sandboxWriteFile", "sandboxListDir", "sandboxSync", "sandboxDestroy"]
+}

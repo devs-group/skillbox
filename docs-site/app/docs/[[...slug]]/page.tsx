@@ -6,7 +6,8 @@ import {
   DocsTitle,
 } from 'fumadocs-ui/page';
 import { notFound } from 'next/navigation';
-import defaultMdxComponents from 'fumadocs-ui/mdx';
+import { getMDXComponents } from '@/mdx-components';
+import { APIPage } from '@/components/api-page';
 
 export async function generateStaticParams() {
   return source.generateParams();
@@ -32,6 +33,18 @@ export default async function Page(props: {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  // OpenAPI-generated pages
+  if ('getAPIPageProps' in page.data && typeof page.data.getAPIPageProps === 'function') {
+    return (
+      <DocsPage full>
+        <h1 className="text-[1.75em] font-semibold">{page.data.title}</h1>
+        <DocsBody>
+          <APIPage {...(page.data as any).getAPIPageProps()} />
+        </DocsBody>
+      </DocsPage>
+    );
+  }
+
   const MDX = page.data.body;
 
   return (
@@ -39,7 +52,7 @@ export default async function Page(props: {
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <MDX components={{ ...defaultMdxComponents }} />
+        <MDX components={getMDXComponents()} />
       </DocsBody>
     </DocsPage>
   );
