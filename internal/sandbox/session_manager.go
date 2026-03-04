@@ -11,10 +11,16 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/devs-group/skillbox/internal/artifacts"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/store"
 )
+
+// maxSessionFileSize is the maximum size of a single file that the session
+// manager will read into memory during mount or sync operations.
+const maxSessionFileSize = 100 << 20 // 100 MiB
 
 // DirEntry describes a single entry returned by ListDir.
 type DirEntry struct {
@@ -50,8 +56,9 @@ type SessionManager struct {
 	artifacts *artifacts.Collector
 	config    *config.Config
 
-	mu       sync.Mutex
-	sessions map[string]*ManagedSandbox // keyed by "{tenantID}:{sessionExternalID}"
+	mu          sync.Mutex
+	sessions    map[string]*ManagedSandbox // keyed by "{tenantID}:{sessionExternalID}"
+	createGroup singleflight.Group         // coalesces concurrent GetOrCreate for same key
 }
 
 // NewSessionManager creates a SessionManager with all required dependencies.
@@ -74,9 +81,38 @@ func sessionKey(tenantID, externalID string) string {
 // When creating: calls store.GetOrCreateSession, creates sandbox with OpenSandbox
 // API, waits for ready, discovers ExecD, mounts session files from MinIO, and
 // creates placeholder directories. Returns cached sandbox on subsequent calls.
+// Concurrent calls for the same key are coalesced via singleflight.
 func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID string, opts SandboxSessionOpts) (*ManagedSandbox, error) {
 	key := sessionKey(tenantID, externalID)
 
+	// Fast path: already cached.
+	sm.mu.Lock()
+	if ms, ok := sm.sessions[key]; ok {
+		ms.LastUsedAt = time.Now()
+		sm.mu.Unlock()
+		return ms, nil
+	}
+	// Check capacity before unlocking.
+	if len(sm.sessions) >= sm.config.MaxSessionSandboxes {
+		sm.mu.Unlock()
+		return nil, fmt.Errorf("session manager: max concurrent session sandboxes reached (%d)", sm.config.MaxSessionSandboxes)
+	}
+	sm.mu.Unlock()
+
+	// Coalesce concurrent creations for the same key.
+	val, err, _ := sm.createGroup.Do(key, func() (any, error) {
+		return sm.createSandbox(ctx, tenantID, externalID, key, opts)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return val.(*ManagedSandbox), nil
+}
+
+// createSandbox performs the actual sandbox creation. Called at most once
+// per key due to singleflight coalescing.
+func (sm *SessionManager) createSandbox(ctx context.Context, tenantID, externalID, key string, opts SandboxSessionOpts) (*ManagedSandbox, error) {
+	// Re-check cache in case another singleflight call just completed.
 	sm.mu.Lock()
 	if ms, ok := sm.sessions[key]; ok {
 		ms.LastUsedAt = time.Now()
@@ -137,7 +173,6 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID 
 
 	// Wait for sandbox to be running.
 	if _, err := sm.client.WaitReady(ctx, sbResp.ID); err != nil {
-		// Clean up the sandbox if wait fails.
 		_ = sm.client.DeleteSandbox(context.Background(), sbResp.ID)
 		return nil, fmt.Errorf("session manager: wait ready: %w", err)
 	}
@@ -161,7 +196,6 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID 
 			"sandbox_id", sbResp.ID,
 			"error", err,
 		)
-		// Non-fatal: sandbox may still be usable.
 	}
 
 	// Mount existing session files from MinIO into the sandbox.
@@ -170,7 +204,6 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID 
 			"sandbox_id", sbResp.ID,
 			"error", err,
 		)
-		// Non-fatal: continue with empty sandbox.
 	}
 
 	ms := &ManagedSandbox{
@@ -185,14 +218,6 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID 
 	}
 
 	sm.mu.Lock()
-	// Double-check: another goroutine may have created one concurrently.
-	if existing, ok := sm.sessions[key]; ok {
-		sm.mu.Unlock()
-		// Clean up the one we just created.
-		_ = sm.client.DeleteSandbox(context.Background(), sbResp.ID)
-		existing.LastUsedAt = time.Now()
-		return existing, nil
-	}
 	sm.sessions[key] = ms
 	sm.mu.Unlock()
 
@@ -220,7 +245,7 @@ func (sm *SessionManager) mountSessionFiles(ctx context.Context, tenantID, sessi
 			)
 			continue
 		}
-		data, err := io.ReadAll(rc)
+		data, err := io.ReadAll(io.LimitReader(rc, maxSessionFileSize))
 		_ = rc.Close()
 		if err != nil {
 			slog.Warn("session manager: failed to read file for mount",
@@ -287,7 +312,7 @@ func (sm *SessionManager) ReadFile(ctx context.Context, key string, filePath str
 	}
 	defer rc.Close() //nolint:errcheck
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxSessionFileSize))
 	if err != nil {
 		return nil, fmt.Errorf("session manager: read file body: %w", err)
 	}
@@ -442,7 +467,7 @@ func (sm *SessionManager) SyncSessionFiles(ctx context.Context, key string) erro
 				)
 				continue
 			}
-			data, err := io.ReadAll(rc)
+			data, err := io.ReadAll(io.LimitReader(rc, maxSessionFileSize))
 			_ = rc.Close()
 			if err != nil {
 				slog.Warn("session manager: sync read failed",
