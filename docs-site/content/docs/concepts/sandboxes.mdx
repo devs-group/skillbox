@@ -1,0 +1,52 @@
+---
+title: Sandboxes
+description: OpenSandbox isolation and security model
+---
+
+Every skill execution runs inside a hardened container managed by OpenSandbox. Security controls are enforced by the runtime and are not configurable by API callers.
+
+## Security Controls
+
+| Control | Implementation | Threat Mitigated |
+|---|---|---|
+| Network isolation | OpenSandbox `NetworkPolicy` with `defaultAction: deny` | Data exfiltration, SSRF |
+| Resource limits | CPU and memory caps clamped to server maximums | Fork bombs, resource exhaustion |
+| Image allowlist | Image validated before `CreateSandbox` is called | Supply-chain attack |
+| Timeout | Go context with deadline + sandbox TTL | Runaway processes, resource exhaustion |
+| Env var blocking | `LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS` filtered | Library injection |
+| Sandbox lifecycle | OpenSandbox API (no Docker socket required) | Host escape via socket |
+
+## Resource Limits
+
+| Resource | Default | Maximum |
+|---|---|---|
+| CPU | 0.5 cores | 4.0 cores |
+| Memory | 256Mi | 1Gi |
+| Timeout | 120s | 10 minutes |
+
+Skills may request higher limits in `SKILL.md`; the server clamps requests to the maximums above.
+
+## Allowed Images
+
+The server maintains an allowlist of permitted base images, configured via the `SKILLBOX_IMAGE_ALLOWLIST` environment variable. Any skill that declares an image not on the list is rejected before a sandbox is created.
+
+Default allowlisted images:
+
+```
+python:3.12-slim
+node:20-slim
+bash:5
+```
+
+## No Caller Control
+
+Callers cannot disable network isolation, raise resource limits beyond the server cap, or add environment variables that bypass filtering. The security posture is set by the operator at deploy time, not by the skill author or the API caller.
+
+## Residual Risk
+
+OpenSandbox provides strong isolation via Linux namespaces and cgroups. However, the host kernel is still shared across all sandboxes. For workloads that execute fully untrusted, adversarial code, consider running the Skillbox node pool with a stronger isolation layer:
+
+- **gVisor** (`runsc`) intercepts syscalls in userspace.
+- **Kata Containers** runs each sandbox in a lightweight VM with a separate kernel.
+
+Both can be configured as a Kubernetes `RuntimeClass` without changes to the Skillbox API.

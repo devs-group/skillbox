@@ -1,0 +1,50 @@
+---
+title: Cognitive Mode
+description: Library-style skills where the LLM writes code at runtime
+---
+
+Cognitive mode inverts the normal execution model. Instead of running a fixed script, the skill provides Python libraries and lets the agent generate code that uses them at runtime.
+
+## What Cognitive Mode Is
+
+A skill with `mode: cognitive` in its frontmatter has no `scripts/main.py`. The skill archive ships Python utilities (in `core/` or `lib/`) and a `SKILL.md` that describes what those utilities do and how to use them. The LLM reads those instructions and writes the code.
+
+```yaml
+---
+name: stats-toolkit
+version: 1.0.0
+description: Statistical analysis utilities for pandas DataFrames
+lang: python
+mode: cognitive
+---
+
+## Available Utilities
+
+`core/summarise.py` — `summarise(df)` returns mean, median, stddev per column.
+`core/outliers.py` — `find_outliers(df, z=3.0)` returns rows beyond z standard deviations.
+```
+
+## How It Works
+
+1. The skill archive contains Python files in `core/` or `lib/`, but no `scripts/main.py`.
+2. The agent fetches skill instructions via `GET /v1/skills/:name/:version`.
+3. The agent generates Python code that imports and calls the skill's libraries.
+4. The agent sends an execution request with `mount_only: true`.
+5. The runner mounts the skill files into the sandbox without executing any entrypoint.
+6. The agent uses the sandbox shell API to run its generated code inside the mounted environment.
+
+## Auto-Generated Entrypoint
+
+For cognitive skills that do not set `mount_only: true`, the runner creates a lightweight wrapper at execution time. The wrapper extracts code blocks from the input JSON and executes them, so the skill still participates in the standard execution lifecycle.
+
+## When to Use Cognitive Mode
+
+- You are shipping a data analysis library and want the agent to decide how to use it based on context.
+- The logic changes with every call and cannot be fixed in advance.
+- You need the agent to compose multiple utility functions flexibly.
+
+## When Not to Use Cognitive Mode
+
+- The task has deterministic, fixed logic — use executable mode instead.
+- You need a guaranteed output schema that must not vary.
+- You want to audit exactly what code runs (executable mode ships the code in the archive; cognitive mode generates it at runtime).

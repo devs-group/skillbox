@@ -1,0 +1,100 @@
+---
+title: Installation
+description: Install the Skillbox server, CLI, and SDKs
+---
+
+# Installation
+
+## Server
+
+Docker Compose is the recommended way to run the Skillbox server. It handles all required services and their configuration.
+
+### Required Services
+
+| Service | Purpose |
+|---|---|
+| PostgreSQL | Skill registry and execution metadata |
+| MinIO | Skill artifact storage |
+| OpenSandbox | Isolated execution environment |
+
+### Start with Docker Compose
+
+```bash
+git clone https://github.com/devs-group/skillbox.git
+cd skillbox
+docker compose -f deploy/docker/docker-compose.yml up -d
+```
+
+The server starts on port `8080` by default. Configuration options are documented in `deploy/docker/docker-compose.yml` and the `.env.example` file at the repository root.
+
+## CLI
+
+The CLI requires Go 1.21 or later.
+
+```bash
+go install github.com/devs-group/skillbox/cmd/skillbox@latest
+```
+
+After installation, verify it is on your path:
+
+```bash
+skillbox version
+```
+
+The CLI connects to a Skillbox server. Set the server address and API key as environment variables or pass them as flags on each command:
+
+```bash
+export SKILLBOX_SERVER=http://localhost:8080
+export SKILLBOX_API_KEY=sk-your-key
+```
+
+## Go SDK
+
+```bash
+go get github.com/devs-group/skillbox/sdks/go
+```
+
+The Go SDK has no external dependencies and uses only the standard library.
+
+```go
+import skillbox "github.com/devs-group/skillbox/sdks/go"
+
+client := skillbox.NewClient("http://localhost:8080", "sk-your-key")
+result, err := client.Run(ctx, "data-analysis", input)
+```
+
+## Python SDK
+
+The Python SDK is a single file with no dependencies. Copy it into your project:
+
+```bash
+curl -o skillbox.py \
+  https://raw.githubusercontent.com/devs-group/skillbox/main/sdks/python/skillbox.py
+```
+
+Then import it directly:
+
+```python
+from skillbox import Client
+
+client = Client("http://localhost:8080", "sk-your-key")
+result = client.run("data-analysis", input={"data": []})
+```
+
+No `pip install` required. The file works with Python 3.8 and later.
+
+## Verifying Installation
+
+Check the CLI:
+
+```bash
+skillbox version
+```
+
+Check the server:
+
+```bash
+curl http://localhost:8080/health
+```
+
+A healthy server responds with `200 OK`. If the server is not yet ready, wait a few seconds and retry — the database migration runs on first start.

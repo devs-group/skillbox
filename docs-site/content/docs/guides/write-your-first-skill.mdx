@@ -1,0 +1,121 @@
+---
+title: Write Your First Skill
+description: Build, upload, and execute a skill in 10 minutes
+---
+
+This guide walks you through creating a minimal Python skill, packaging it, uploading it to Skillbox, and running it — end to end.
+
+## Prerequisites
+
+- Skillbox API running locally (see [Deploy with Docker Compose](./deploy-docker))
+- A valid API key in `$SKILLBOX_API_KEY`
+- Python 3, `zip`, and `curl` installed
+
+## Step 1: Create the skill directory
+
+```bash
+mkdir my-word-counter && cd my-word-counter
+```
+
+## Step 2: Write the skill manifest
+
+Create `SKILL.md` at the root of the directory:
+
+```markdown
+---
+name: word-counter
+version: 1.0.0
+description: Counts the number of words in a text string.
+lang: python
+---
+
+## Instructions
+
+Given an input object with a `text` field (string), return the word count as `{"count": <number>}`.
+```
+
+The frontmatter fields `name`, `version`, and `lang` are required. `description` is strongly recommended.
+
+## Step 3: Write the entrypoint script
+
+Create `scripts/main.py`:
+
+```python
+import os
+import json
+
+# Read input from the environment variable set by the sandbox
+raw = os.environ.get("SANDBOX_INPUT", "{}")
+data = json.loads(raw)
+
+text = data.get("text", "")
+word_count = len(text.split()) if text.strip() else 0
+
+result = {"count": word_count}
+
+# Write output to the path specified by the sandbox
+output_path = os.environ.get("SANDBOX_OUTPUT")
+if output_path:
+    with open(output_path, "w") as f:
+        json.dump(result, f)
+else:
+    print(json.dumps(result))
+```
+
+The sandbox injects `SANDBOX_INPUT` as a JSON string and expects the script to write its result to `SANDBOX_OUTPUT`.
+
+## Step 4: Package the skill
+
+From the parent directory:
+
+```bash
+cd my-word-counter && zip -r ../word-counter-1.0.0.zip .
+cd ..
+```
+
+The zip must contain `SKILL.md` at its root.
+
+## Step 5: Upload the skill
+
+```bash
+curl -X POST http://localhost:8080/v1/skills \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -F "file=@word-counter-1.0.0.zip"
+```
+
+A successful response returns the skill record including its `id` and `name`.
+
+## Step 6: Execute the skill
+
+```bash
+curl -X POST http://localhost:8080/v1/executions \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"skill": "word-counter", "input": {"text": "hello world hello"}}'
+```
+
+The response includes an `id` for the execution and an initial `status`.
+
+## Step 7: Read the result
+
+```bash
+curl http://localhost:8080/v1/executions/{id} \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+Replace `{id}` with the execution ID from the previous step. When `status` is `succeeded`, the `output` field contains the result:
+
+```json
+{
+  "status": "succeeded",
+  "output": {
+    "count": 3
+  }
+}
+```
+
+## Next steps
+
+- Add dependencies using `requirements.txt` — see [Skill Authoring](./skill-authoring)
+- Connect this skill to an AI agent — see [Agent Integration](./agent-integration)
+- Run skills in a persistent session — see [Session Workflows](./session-workflows)

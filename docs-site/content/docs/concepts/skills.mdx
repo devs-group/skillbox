@@ -1,0 +1,83 @@
+---
+title: Skills
+description: Versioned, discoverable units of agent capability
+---
+
+A skill is a zip archive that packages everything needed to run a discrete unit of agent capability: code, dependencies, and a machine-readable manifest.
+
+## Archive Structure
+
+```
+skill.zip
+├── SKILL.md              # required — manifest + instructions
+├── scripts/
+│   └── main.py           # required (executable mode)
+├── requirements.txt      # optional
+├── package.json          # optional
+└── references/           # optional — static reference files
+```
+
+## SKILL.md Format
+
+`SKILL.md` has two sections: a YAML frontmatter block read by the runtime, and a markdown body read by the LLM at execution time.
+
+```yaml
+---
+name: data-analysis
+version: 1.2.0
+description: Analyse a CSV file and return summary statistics
+lang: python
+image: python:3.12-slim
+timeout: 5m
+resources:
+  cpu: "0.5"
+  memory: 256Mi
+---
+
+## Instructions
+
+Read the input JSON for a `file_url` field. Download the CSV,
+compute summary statistics, and write results to output.
+```
+
+## Frontmatter Fields
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Lowercase, hyphen-separated identifier |
+| `version` | yes | Semantic version (e.g. `1.2.0`) |
+| `description` | yes | Short human-readable summary |
+| `lang` | no | `python`, `node`, or `bash` (default: `python`) |
+| `image` | no | Docker image; must be on the server allowlist |
+| `timeout` | no | Max run duration (e.g. `5m`); hard cap is 10 minutes |
+| `resources.cpu` | no | CPU units (e.g. `"0.5"`) |
+| `resources.memory` | no | Memory limit (e.g. `256Mi`) |
+
+### Default Images
+
+| Lang | Default Image |
+|---|---|
+| `python` | `python:3.12-slim` |
+| `node` | `node:20-slim` |
+| `bash` | `bash:5` |
+
+## Versioning
+
+Uploading a skill with the same name and a new version number creates a new immutable version. The `latest` alias always resolves to the most recently uploaded version.
+
+## Storage
+
+Skills are stored in MinIO at the path:
+
+```
+{tenant}/{skill-name}/{version}/skill.zip
+```
+
+## Skill Modes
+
+| Mode | Description |
+|---|---|
+| `executable` | Default. The runtime executes `scripts/main.py` (or equivalent). |
+| `cognitive` | Library-style. No entrypoint required; the LLM generates and executes code at runtime. |
+
+See [Cognitive Mode](/docs/concepts/cognitive-mode) for details on library-style skills.

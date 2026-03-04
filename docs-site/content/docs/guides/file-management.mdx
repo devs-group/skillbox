@@ -1,0 +1,137 @@
+---
+title: File Management
+description: Upload, version, and manage files for skill executions
+---
+
+Skillbox lets you upload files independently of executions. This is useful for large reference datasets, model weights, or any input you want to reuse across multiple skill runs.
+
+## Upload a file
+
+```bash
+curl -X POST http://localhost:8080/v1/files \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -F "file=@report.csv" \
+  -F "name=report.csv"
+```
+
+Response:
+
+```json
+{
+  "id": "file_abc123",
+  "name": "report.csv",
+  "size": 204800,
+  "version": 1,
+  "created_at": "2026-03-04T10:00:00Z"
+}
+```
+
+## Reference files in executions
+
+Pass file IDs in the `input_files` array of an execution request. Each file is mounted inside the sandbox at `/sandbox/input/<filename>`:
+
+```bash
+curl -X POST http://localhost:8080/v1/executions \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skill": "csv-analyzer",
+    "input": {"column": "revenue"},
+    "input_files": ["file_abc123"]
+  }'
+```
+
+Inside the sandbox, the skill reads the file from `/sandbox/input/report.csv`.
+
+## Update a file (new version)
+
+```bash
+curl -X PUT http://localhost:8080/v1/files/file_abc123 \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -F "file=@report-v2.csv"
+```
+
+`PUT` creates a new version rather than overwriting. The file ID remains the same; the `version` counter increments.
+
+## List versions
+
+```bash
+curl http://localhost:8080/v1/files/file_abc123/versions \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+Response:
+
+```json
+[
+  {"version": 2, "size": 210000, "created_at": "2026-03-04T11:00:00Z"},
+  {"version": 1, "size": 204800, "created_at": "2026-03-04T10:00:00Z"}
+]
+```
+
+Executions always use the latest version unless you specify a version explicitly.
+
+## Download a file
+
+```bash
+curl http://localhost:8080/v1/files/file_abc123/download \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+The response is a redirect to a presigned object storage URL valid for a short window. Follow the redirect to download the file content.
+
+## List files with pagination
+
+```bash
+curl "http://localhost:8080/v1/files?page=1&per_page=20" \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+## Go SDK
+
+```go
+// Upload
+f, err := client.Files.Upload(ctx, "report.csv", fileReader)
+
+// List
+files, err := client.Files.List(ctx, &skillbox.ListFilesOptions{Page: 1, PerPage: 20})
+
+// Download URL
+url, err := client.Files.DownloadURL(ctx, "file_abc123")
+
+// Use in execution
+exec, err := client.Executions.Run(ctx, &skillbox.RunRequest{
+    Skill:      "csv-analyzer",
+    Input:      map[string]any{"column": "revenue"},
+    InputFiles: []string{"file_abc123"},
+})
+```
+
+## Python SDK
+
+```python
+# Upload
+f = client.files.upload("report.csv", open("report.csv", "rb"))
+
+# List
+files = client.files.list(page=1, per_page=20)
+
+# Download URL
+url = client.files.download_url("file_abc123")
+
+# Use in execution
+result = client.executions.run_sync(
+    skill="csv-analyzer",
+    input={"column": "revenue"},
+    input_files=["file_abc123"],
+)
+```
+
+## Delete a file
+
+```bash
+curl -X DELETE http://localhost:8080/v1/files/file_abc123 \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+Deleting a file removes all versions. Any executions that previously referenced the file retain their result records; the file content is removed from object storage.

@@ -1,0 +1,64 @@
+---
+title: Sessions
+description: Persistent sandbox sessions for multi-step workflows
+---
+
+A session is a named, persistent sandbox environment. Files written during one execution remain available in the next, so agents can build up state across multiple steps without re-uploading data each time.
+
+## Session Identifier
+
+The `session_id` is a single caller-provided string that appears in three places:
+
+- The `session_id` field in the `POST /v1/executions` request body.
+- The `X-Session-ID` header for sandbox shell API calls.
+- The `:id` path parameter in session management endpoints (e.g. `GET /v1/sessions/:id/files`).
+
+These are the same identifier. Choose a value that is unique within your tenant (a UUID works well).
+
+## Creating a Session
+
+Include `session_id` in any execution request. If a session with that ID does not exist, one is created automatically. If it does exist, the existing workspace is reused.
+
+```bash
+curl -X POST http://localhost:8080/v1/executions \
+  -H "Authorization: Bearer sk-your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skill": "data-analysis",
+    "version": "latest",
+    "session_id": "my-analysis-session",
+    "input": {"file_url": "https://example.com/data.csv"}
+  }'
+```
+
+## Workspace Persistence
+
+Files written to `SANDBOX_FILES_DIR` during an execution are synced to MinIO under the session's namespace. On the next execution with the same `session_id`, those files are restored into the sandbox before the skill runs.
+
+## Session Lifecycle
+
+| Stage | Action |
+|---|---|
+| Create | First `POST /v1/executions` with a new `session_id` |
+| Reuse | Subsequent executions reference the same `session_id` |
+| Sync | Files are synced to MinIO after each execution |
+| Cleanup | `DELETE /v1/sessions/:id` removes the session and its files |
+
+## File Management
+
+```bash
+# List files in a session
+GET /v1/sessions/:id/files
+
+# Download a specific file
+GET /v1/sessions/:id/files/:filename
+
+# Delete the session and all its files
+DELETE /v1/sessions/:id
+```
+
+## Use Cases
+
+- **Multi-step data processing**: clean a dataset in step 1, analyse it in step 2, generate a report in step 3.
+- **Iterative analysis**: let the agent refine results across several executions without re-uploading source data.
+- **Stateful workflows**: accumulate outputs from multiple skills into a shared workspace before a final aggregation step.

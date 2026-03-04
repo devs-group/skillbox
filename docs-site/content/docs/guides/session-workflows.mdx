@@ -1,0 +1,135 @@
+---
+title: Session Workflows
+description: Multi-step execution with persistent sandbox sessions
+---
+
+A session keeps a sandbox container alive between skill executions. Use sessions when your workflow requires shared state — files written in one step must be readable in the next.
+
+## Create a session and run the first step
+
+Include a `session_id` in any execution request. If the session does not exist, it is created automatically:
+
+```bash
+curl -X POST http://localhost:8080/v1/executions \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skill": "data-loader",
+    "input": {"source": "s3://bucket/dataset.csv"},
+    "session_id": "session-pipeline-001"
+  }'
+```
+
+## Run subsequent steps in the same session
+
+Subsequent executions with the same `session_id` reuse the same sandbox. Files written to `/sandbox/workspace` in earlier steps are still present:
+
+```bash
+curl -X POST http://localhost:8080/v1/executions \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skill": "data-transformer",
+    "input": {"file": "/sandbox/workspace/dataset.csv"},
+    "session_id": "session-pipeline-001"
+  }'
+```
+
+## Inspect the workspace via the sandbox shell API
+
+While a session is live you can inspect and modify its filesystem directly.
+
+### Execute a shell command
+
+```bash
+curl -X POST http://localhost:8080/v1/sandbox/execute \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "X-Session-ID: session-pipeline-001" \
+  -H "Content-Type: application/json" \
+  -d '{"command": "ls /sandbox/workspace"}'
+```
+
+### Read a file
+
+```bash
+curl -X POST http://localhost:8080/v1/sandbox/read-file \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "X-Session-ID: session-pipeline-001" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/sandbox/workspace/output.json"}'
+```
+
+### Write a file
+
+```bash
+curl -X POST http://localhost:8080/v1/sandbox/write-file \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "X-Session-ID: session-pipeline-001" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/sandbox/workspace/config.json", "content": "{\"key\": \"value\"}"}'
+```
+
+### List a directory
+
+```bash
+curl -X POST http://localhost:8080/v1/sandbox/list-dir \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "X-Session-ID: session-pipeline-001" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/sandbox/workspace"}'
+```
+
+## Sync session files to object storage
+
+Persist the current workspace to MinIO so it survives beyond the session TTL:
+
+```bash
+curl -X POST http://localhost:8080/v1/sandbox/sync \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "X-Session-ID: session-pipeline-001"
+```
+
+## List session files
+
+After syncing, list the files stored for a session:
+
+```bash
+curl http://localhost:8080/v1/sessions/session-pipeline-001/files \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+## Clean up
+
+Terminate the session sandbox when the workflow is complete:
+
+```bash
+curl -X DELETE http://localhost:8080/v1/sandbox/session-pipeline-001 \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY"
+```
+
+Sessions also expire automatically after the idle TTL defined by `SKILLBOX_SANDBOX_SESSION_TTL` (default `30m`).
+
+## Example: multi-step data processing pipeline
+
+```python
+SESSION = "pipeline-" + str(uuid.uuid4())
+
+# Step 1: load data into the session workspace
+client.executions.run_sync("data-loader", input={"url": data_url}, session_id=SESSION)
+
+# Step 2: clean the data
+client.executions.run_sync("data-cleaner", input={}, session_id=SESSION)
+
+# Step 3: run analysis
+result = client.executions.run_sync("data-analyzer", input={"metric": "mean"}, session_id=SESSION)
+
+# Persist results to object storage
+client.sandbox.sync(SESSION)
+
+# Tear down
+client.sandbox.delete(SESSION)
+
+print(result.output)
+```
+
+Session sandboxes count against `SKILLBOX_MAX_SESSION_SANDBOXES`. See [Configuration Reference](./configuration) for limits.

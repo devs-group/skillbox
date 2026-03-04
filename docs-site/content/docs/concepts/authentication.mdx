@@ -1,0 +1,64 @@
+---
+title: Authentication
+description: API keys, tenants, and the security model
+---
+
+All `/v1/*` endpoints require a Bearer token. Tokens are API keys provisioned out-of-band and stored as SHA-256 hashes in PostgreSQL.
+
+## Auth Flow
+
+1. The client sends `Authorization: Bearer <api-key>`.
+2. The auth middleware computes `SHA-256(<api-key>)` and looks it up in the `api_keys` table.
+3. The matched record contains the `tenant_id` for the request.
+4. All subsequent operations (skill lookups, execution records, session files) are scoped to that tenant.
+
+Tenant identity is **never** derived from client-supplied headers or request fields. It is always determined by the API key.
+
+## Example Request
+
+```bash
+curl -H "Authorization: Bearer sk-your-api-key" \
+     http://localhost:8080/v1/skills
+```
+
+## Provisioning API Keys
+
+Use the provided seed script to insert a key directly into PostgreSQL:
+
+```bash
+scripts/seed-apikey.sh --name "my-agent" --tenant "acme"
+```
+
+The script generates a random key, hashes it, and inserts the record. The plaintext key is printed once and is not stored.
+
+## Multi-Tenancy
+
+Skills, executions, and session files are isolated per tenant at the storage layer:
+
+- MinIO paths are prefixed with the `tenant_id`.
+- All database queries include a `tenant_id` filter derived from the API key.
+- There is no way to access another tenant's resources, even with a valid API key for a different tenant.
+
+## SDK Usage
+
+Both SDKs accept the API key in the constructor or read it from the `SKILLBOX_API_KEY` environment variable.
+
+```python
+# Python SDK
+from skillbox import Client
+
+client = Client(api_key="sk-your-api-key")
+# or: set SKILLBOX_API_KEY and call Client() with no arguments
+```
+
+```go
+// Go SDK
+client := skillbox.NewClient(skillbox.WithAPIKey("sk-your-api-key"))
+// or: set SKILLBOX_API_KEY and call NewClient() with no options
+```
+
+## Security Notes
+
+- API keys are stored only as SHA-256 hashes. If a key is lost, it must be revoked and a new one generated.
+- Rotate keys by inserting a new record and deleting the old one. There is no key update operation.
+- Do not pass API keys in query strings — use the `Authorization` header.
