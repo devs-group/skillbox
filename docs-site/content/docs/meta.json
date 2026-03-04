@@ -1,0 +1,11 @@
+{
+  "title": "Skillbox",
+  "pages": [
+    "index",
+    "getting-started",
+    "concepts",
+    "guides",
+    "api-reference",
+    "sdks"
+  ]
+}

@@ -1,0 +1,30 @@
+---
+title: API Reference
+description: Complete REST API documentation for the Skillbox execution runtime.
+---
+
+The Skillbox API is organized around REST. All requests and responses use JSON. Authentication is via Bearer token.
+
+Base URL: `http://localhost:8080/v1`
+
+## Authentication
+
+All `/v1/*` endpoints require a Bearer token:
+
+```bash
+curl -H "Authorization: Bearer sk-your-api-key" \
+  http://localhost:8080/v1/skills
+```
+
+## Endpoint Groups
+
+| Group | Description |
+|-------|-------------|
+| [Health](/docs/api-reference#health) | Liveness and readiness probes |
+| [Executions](/docs/api-reference#executions) | Run skills and retrieve results |
+| [Skills](/docs/api-reference#skills) | Upload, list, and manage skills |
+| [Files](/docs/api-reference#files) | Upload and manage input/output files |
+| [Sessions](/docs/api-reference#sessions) | Persistent workspace file management |
+| [Sandbox](/docs/api-reference#sandbox) | Interactive sandbox shell commands |
+
+> Files, Sessions, and Sandbox endpoints require their respective backing services (MinIO, OpenSandbox) to be configured. They return 404 when unavailable.
