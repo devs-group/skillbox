@@ -1,0 +1,103 @@
+---
+title: Deploy with Docker Compose
+description: Run Skillbox locally or in production with Docker Compose
+---
+
+The quickest way to run Skillbox is with the included Docker Compose configuration. It starts all required services with a single command.
+
+## Required services
+
+| Service | Image | Purpose |
+|---|---|---|
+| PostgreSQL 16 | `postgres:16` | Primary datastore |
+| MinIO | `minio/minio` | Object storage for skill archives and artifacts |
+| OpenSandbox | `ghcr.io/your-org/opensandbox` | Sandbox execution engine |
+| Skillbox API | `ghcr.io/your-org/skillbox` | HTTP API server |
+
+## Start all services
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up -d
+```
+
+Verify all containers are running:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml ps
+```
+
+## Environment variables
+
+The Compose file sets the following variables for the API container. Override them in a `.env` file alongside the Compose file or via your environment:
+
+```
+SKILLBOX_DB_DSN=postgres://skillbox:skillbox@postgres:5432/skillbox?sslmode=disable
+SKILLBOX_S3_ENDPOINT=minio:9000
+SKILLBOX_S3_ACCESS_KEY=minioadmin
+SKILLBOX_S3_SECRET_KEY=minioadmin
+SKILLBOX_S3_USE_SSL=false
+SKILLBOX_S3_BUCKET_SKILLS=skills
+SKILLBOX_S3_BUCKET_EXECUTIONS=executions
+SKILLBOX_OPENSANDBOX_URL=http://opensandbox:8080
+SKILLBOX_OPENSANDBOX_API_KEY=dev-key
+```
+
+See [Configuration Reference](./configuration) for all available variables.
+
+## Service health checks
+
+Each service declares a health check so Docker can report readiness. The Skillbox API container waits for PostgreSQL and MinIO to pass their health checks before accepting traffic.
+
+To watch health status:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml ps --format "table {{.Name}}\t{{.Status}}"
+```
+
+## Volume persistence
+
+Two named volumes keep data across restarts:
+
+```yaml
+volumes:
+  pgdata:    # PostgreSQL data directory
+  miniodata: # MinIO object storage
+```
+
+Remove them only when you want a clean slate:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml down -v
+```
+
+## Networks
+
+```
+backend  — connects all services internally
+docker   — grants OpenSandbox access to the Docker socket for container management
+```
+
+Application services communicate over `backend`. The `docker` network is internal and should not be exposed externally.
+
+## Create your first API key
+
+After all services are healthy, run the seed script:
+
+```bash
+bash scripts/seed-apikey.sh
+```
+
+The script prints the generated API key. Store it in `$SKILLBOX_API_KEY` for use with the CLI and SDKs.
+
+## Production hardening
+
+Before deploying to a shared environment:
+
+- Change `SKILLBOX_S3_ACCESS_KEY` and `SKILLBOX_S3_SECRET_KEY` from the defaults
+- Set `SKILLBOX_S3_USE_SSL=true` and point `SKILLBOX_S3_ENDPOINT` at a TLS-enabled endpoint
+- Set a strong `POSTGRES_PASSWORD` in the Compose file
+- Add `deploy.resources.limits` to each service in the Compose file to cap CPU and memory
+- Restrict the `docker` network to only the OpenSandbox container
+- Rotate the OpenSandbox API key (`SKILLBOX_OPENSANDBOX_API_KEY`) from the default
+
+For Kubernetes deployment, see [Deploy to Kubernetes](./deploy-kubernetes).

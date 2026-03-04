@@ -1,0 +1,4 @@
+{
+  "title": "Sessions",
+  "pages": ["listSessionFiles", "downloadSessionFile", "deleteSessionFile", "deleteSession"]
+}

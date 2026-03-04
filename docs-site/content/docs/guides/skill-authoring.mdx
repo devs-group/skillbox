@@ -1,0 +1,157 @@
+---
+title: Skill Authoring
+description: Advanced patterns for building skills
+---
+
+This page covers the full range of options available when authoring a skill, from multi-file layouts to custom Docker images to resource configuration.
+
+## Skill layout
+
+A skill is a zip archive containing a `SKILL.md` manifest at its root. Everything else is optional and up to you.
+
+```
+my-skill/
+  SKILL.md
+  scripts/
+    main.py
+  references/
+    schema.json
+    examples.md
+  requirements.txt
+```
+
+Files in `references/` are made available to the sandbox at runtime and are also parsed by Skillbox to enrich the skill's instruction context for agents.
+
+## Supported runtimes
+
+### Python
+
+```markdown
+---
+name: my-python-skill
+version: 1.0.0
+lang: python
+---
+```
+
+Place dependencies in `requirements.txt` at the skill root. Skillbox installs them before execution:
+
+```
+requests==2.32.3
+pydantic==2.7.1
+```
+
+### Node.js
+
+```markdown
+---
+name: my-node-skill
+version: 1.0.0
+lang: node
+---
+```
+
+Place dependencies in `package.json`. Skillbox runs `npm ci` before execution:
+
+```json
+{
+  "name": "my-node-skill",
+  "dependencies": {
+    "zod": "^3.23.0"
+  }
+}
+```
+
+The entrypoint reads `process.env.SANDBOX_INPUT` and writes to `process.env.SANDBOX_OUTPUT`:
+
+```js
+const fs = require("fs");
+
+const data = JSON.parse(process.env.SANDBOX_INPUT || "{}");
+const result = { length: data.text?.length ?? 0 };
+
+fs.writeFileSync(process.env.SANDBOX_OUTPUT, JSON.stringify(result));
+```
+
+### Bash
+
+```markdown
+---
+name: my-bash-skill
+version: 1.0.0
+lang: bash
+---
+```
+
+```bash
+#!/usr/bin/env bash
+INPUT=$(echo "$SANDBOX_INPUT" | jq -r '.text')
+COUNT=$(echo "$INPUT" | wc -w | tr -d ' ')
+echo "{\"count\": $COUNT}" > "$SANDBOX_OUTPUT"
+```
+
+## Custom Docker images
+
+Override the default sandbox image in the manifest:
+
+```markdown
+---
+name: my-custom-skill
+version: 1.0.0
+image: python:3.12-slim
+---
+```
+
+The image must appear in the server's `SKILLBOX_IMAGE_ALLOWLIST`. See [Configuration Reference](./configuration) for the default allowlist and how to extend it.
+
+## Timeouts and resource limits
+
+Set per-skill overrides in the manifest frontmatter:
+
+```markdown
+---
+name: heavy-analysis
+version: 1.0.0
+lang: python
+timeout: 5m
+memory: 512Mi
+cpu: 1.0
+---
+```
+
+Values must not exceed the server-side maximums (`SKILLBOX_MAX_TIMEOUT`, `SKILLBOX_MAX_MEMORY`, `SKILLBOX_MAX_CPU`).
+
+## Cognitive mode
+
+Cognitive mode exposes a persistent Python REPL session to the skill, allowing multi-step reasoning and stateful computation. Enable it in the manifest:
+
+```markdown
+---
+name: data-analyst
+version: 1.0.0
+lang: python
+cognitive: true
+---
+```
+
+In cognitive mode the skill's `SKILL.md` instructions are sent directly to an AI agent rather than running a script. The agent can invoke the sandbox shell to execute code iteratively before producing a final answer.
+
+## File artifacts
+
+Skills can produce file artifacts in addition to JSON output. Write files to the directory at `SANDBOX_ARTIFACTS`:
+
+```python
+import os, json
+
+artifacts_dir = os.environ.get("SANDBOX_ARTIFACTS", "/tmp/artifacts")
+os.makedirs(artifacts_dir, exist_ok=True)
+
+with open(os.path.join(artifacts_dir, "report.txt"), "w") as f:
+    f.write("Analysis complete.\n")
+
+result = {"status": "ok", "artifact": "report.txt"}
+with open(os.environ["SANDBOX_OUTPUT"], "w") as f:
+    json.dump(result, f)
+```
+
+Artifacts are uploaded to object storage and accessible via the execution record's `artifacts` field.

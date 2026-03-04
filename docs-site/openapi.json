@@ -1,0 +1,1354 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Skillbox API",
+    "description": "REST API for the Skillbox execution runtime — a self-hosted skill registry and sandbox execution engine for AI agents.",
+    "version": "1.0.0",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Liveness and readiness probes" },
+    { "name": "Executions", "description": "Run skills and retrieve results" },
+    { "name": "Skills", "description": "Upload, list, and manage skills" },
+    { "name": "Files", "description": "Upload and manage input/output files" },
+    { "name": "Sessions", "description": "Persistent workspace file management" },
+    { "name": "Sandbox", "description": "Interactive sandbox shell commands" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "description": "Returns server health status. Does not require authentication.",
+        "security": [],
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Readiness check",
+        "description": "Returns readiness status including database connectivity. Does not require authentication.",
+        "security": [],
+        "operationId": "getReady",
+        "responses": {
+          "200": {
+            "description": "Server is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "db": { "type": "string", "example": "ok" }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Server is not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "not_ready" },
+                    "db": { "type": "string", "example": "unreachable" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions": {
+      "post": {
+        "tags": ["Executions"],
+        "summary": "Create an execution",
+        "description": "Runs a skill in a sandbox container and returns the result. The skill is fetched from the registry, a sandbox is provisioned, the entrypoint is executed, and output/artifacts are collected.",
+        "operationId": "createExecution",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExecutionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Execution completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "500": {
+            "description": "Execution failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{id}": {
+      "get": {
+        "tags": ["Executions"],
+        "summary": "Get execution",
+        "description": "Retrieves a single execution record by ID.",
+        "operationId": "getExecution",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Execution ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution record",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Execution" }
+              }
+            }
+          },
+          "404": {
+            "description": "Execution not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{id}/logs": {
+      "get": {
+        "tags": ["Executions"],
+        "summary": "Get execution logs",
+        "description": "Returns the stdout/stderr logs for a completed execution.",
+        "operationId": "getExecutionLogs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Execution ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution logs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "execution_id": { "type": "string" },
+                    "logs": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Execution not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills": {
+      "post": {
+        "tags": ["Skills"],
+        "summary": "Upload a skill",
+        "description": "Uploads a skill archive (.zip) containing a SKILL.md manifest and source files. The archive is validated, stored in the registry (MinIO), and indexed in the database.",
+        "operationId": "uploadSkill",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Skill archive (.zip)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Skill uploaded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SkillMetadata" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid skill archive",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Skills"],
+        "summary": "List skills",
+        "description": "Returns all skills available to the authenticated tenant. Merges results from the database and the registry.",
+        "operationId": "listSkills",
+        "responses": {
+          "200": {
+            "description": "List of skills",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/SkillSummary" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills/{name}/{version}": {
+      "get": {
+        "tags": ["Skills"],
+        "summary": "Get skill details",
+        "description": "Retrieves full metadata for a specific skill version, including instructions and resource requirements.",
+        "operationId": "getSkill",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill name"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill version (semver)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill metadata",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SkillMetadata" }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Skills"],
+        "summary": "Delete a skill",
+        "description": "Removes a skill version from the registry and database.",
+        "operationId": "deleteSkill",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill name"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill version (semver)"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Skill deleted"
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills/{name}/{version}/files": {
+      "get": {
+        "tags": ["Skills"],
+        "summary": "List skill files",
+        "description": "Returns the file listing from a skill archive. Optionally filter by path prefix.",
+        "operationId": "getSkillFiles",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill name"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill version (semver)"
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Filter files by path prefix"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill file listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/SkillFileEntry" }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/files": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Upload a file",
+        "description": "Uploads a file to S3/MinIO and creates a database record. Requires the MinIO backing service.",
+        "operationId": "uploadFile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "File to upload"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Optional filename override (defaults to uploaded filename)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "File created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/File" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing file field",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Files"],
+        "summary": "List files",
+        "description": "Returns files for the authenticated tenant with optional filters and pagination.",
+        "operationId": "listFiles",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Filter by session ID"
+          },
+          {
+            "name": "execution_id",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Filter by execution ID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 50 },
+            "description": "Maximum number of results"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": { "type": "integer", "default": 0 },
+            "description": "Number of results to skip"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/File" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/files/{id}": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Get file metadata",
+        "description": "Retrieves metadata for a single file by ID.",
+        "operationId": "getFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File metadata",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/File" }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Files"],
+        "summary": "Update a file",
+        "description": "Uploads a new version of an existing file. Creates a new version record linked to the original via parent_id.",
+        "operationId": "updateFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "New file content"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated file record",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/File" }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Files"],
+        "summary": "Delete a file",
+        "description": "Removes the file record from the database and the object from S3.",
+        "operationId": "deleteFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File ID"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "File deleted"
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/files/{id}/download": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Download a file",
+        "description": "Streams the file content from S3/MinIO directly to the client.",
+        "operationId": "downloadFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content stream",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "Content-Disposition": {
+                "schema": { "type": "string" },
+                "description": "Attachment with filename"
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/files/{id}/versions": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "List file versions",
+        "description": "Returns all versions of a file, ordered by version number descending.",
+        "operationId": "listFileVersions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of file versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/File" }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{external_id}/files": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "List session files",
+        "description": "Returns all files associated with a session workspace.",
+        "operationId": "listSessionFiles",
+        "parameters": [
+          {
+            "name": "external_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session external ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of session files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/File" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{external_id}/files/{filename}": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Download a session file",
+        "description": "Streams a specific file from a session workspace.",
+        "operationId": "downloadSessionFile",
+        "parameters": [
+          {
+            "name": "external_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session external ID"
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content stream",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or file not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Sessions"],
+        "summary": "Delete a session file",
+        "description": "Removes a specific file from a session workspace (both S3 and database).",
+        "operationId": "deleteSessionFile",
+        "parameters": [
+          {
+            "name": "external_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session external ID"
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File name"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "File deleted"
+          },
+          "404": {
+            "description": "Session or file not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{external_id}": {
+      "delete": {
+        "tags": ["Sessions"],
+        "summary": "Delete a session",
+        "description": "Deletes a session and all associated files from both S3 and the database.",
+        "operationId": "deleteSession",
+        "parameters": [
+          {
+            "name": "external_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session external ID"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session deleted"
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandbox/execute": {
+      "post": {
+        "tags": ["Sandbox"],
+        "summary": "Execute a command",
+        "description": "Executes a shell command inside the sandbox associated with the session. Requires the `X-Session-ID` header.",
+        "operationId": "sandboxExecute",
+        "parameters": [
+          {
+            "name": "X-Session-ID",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session ID for sandbox routing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxExecRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxExecResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandbox/read-file": {
+      "post": {
+        "tags": ["Sandbox"],
+        "summary": "Read a file",
+        "description": "Reads a file from the sandbox filesystem.",
+        "operationId": "sandboxReadFile",
+        "parameters": [
+          {
+            "name": "X-Session-ID",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session ID for sandbox routing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxReadRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File content",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxReadResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or read error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandbox/write-file": {
+      "post": {
+        "tags": ["Sandbox"],
+        "summary": "Write a file",
+        "description": "Writes content to a file in the sandbox filesystem. Supports append mode.",
+        "operationId": "sandboxWriteFile",
+        "parameters": [
+          {
+            "name": "X-Session-ID",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session ID for sandbox routing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxWriteRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Write successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or write error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandbox/list-dir": {
+      "post": {
+        "tags": ["Sandbox"],
+        "summary": "List a directory",
+        "description": "Lists entries in a sandbox directory with configurable depth.",
+        "operationId": "sandboxListDir",
+        "parameters": [
+          {
+            "name": "X-Session-ID",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session ID for sandbox routing"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SandboxListRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Directory listing",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxListResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or list error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandbox/sync": {
+      "post": {
+        "tags": ["Sandbox"],
+        "summary": "Sync session files",
+        "description": "Synchronizes files from the sandbox filesystem to persistent storage (S3).",
+        "operationId": "sandboxSync",
+        "parameters": [
+          {
+            "name": "X-Session-ID",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session ID for sandbox routing"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sync successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Sync failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandbox/{session}": {
+      "delete": {
+        "tags": ["Sandbox"],
+        "summary": "Destroy a sandbox",
+        "description": "Destroys the sandbox container associated with the given session.",
+        "operationId": "sandboxDestroy",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Session ID"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sandbox destroyed"
+          },
+          "404": {
+            "description": "Sandbox not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key passed as a Bearer token"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Machine-readable error slug"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message"
+          }
+        },
+        "required": ["error", "message"]
+      },
+      "CreateExecutionRequest": {
+        "type": "object",
+        "required": ["skill"],
+        "properties": {
+          "skill": {
+            "type": "string",
+            "description": "Skill name to execute"
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version (defaults to latest)"
+          },
+          "input": {
+            "description": "JSON input passed to the skill"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Environment variables injected into the sandbox"
+          },
+          "input_files": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Map of filename to file ID for input files"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID for persistent workspace reuse"
+          },
+          "mount_only": {
+            "type": "boolean",
+            "description": "If true, mount session files but skip execution"
+          }
+        }
+      },
+      "RunResult": {
+        "type": "object",
+        "properties": {
+          "execution_id": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["success", "failed", "timeout"]
+          },
+          "output": {
+            "description": "JSON output produced by the skill"
+          },
+          "files_url": {
+            "type": "string",
+            "description": "URL to download output files"
+          },
+          "files_list": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of output file names"
+          },
+          "logs": {
+            "type": "string",
+            "description": "Combined stdout/stderr"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "Execution duration in milliseconds"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message if execution failed"
+          }
+        }
+      },
+      "Execution": {
+        "type": "object",
+        "properties": {
+          "execution_id": { "type": "string" },
+          "skill_name": { "type": "string" },
+          "skill_version": { "type": "string" },
+          "tenant_id": { "type": "string" },
+          "status": { "type": "string" },
+          "input": { "description": "JSON input" },
+          "output": { "description": "JSON output" },
+          "logs": { "type": "string" },
+          "files_url": { "type": "string" },
+          "files_list": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "duration_ms": { "type": "integer" },
+          "error": { "type": "string", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" },
+          "finished_at": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
+      "SkillMetadata": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "description": { "type": "string" },
+          "lang": { "type": "string", "description": "Programming language (python, node, go, etc.)" },
+          "image": { "type": "string", "description": "Container image override" },
+          "instructions": { "type": "string", "description": "LLM-readable instructions from SKILL.md body" },
+          "timeout": { "type": "string", "description": "Execution timeout (e.g. '30s', '5m')" },
+          "resources": { "$ref": "#/components/schemas/Resources" },
+          "mode": {
+            "type": "string",
+            "enum": ["executable", "cognitive"],
+            "description": "Skill execution mode"
+          }
+        }
+      },
+      "Resources": {
+        "type": "object",
+        "properties": {
+          "cpu": { "type": "string", "description": "CPU limit (e.g. '0.5')" },
+          "memory": { "type": "string", "description": "Memory limit (e.g. '256Mi')" }
+        }
+      },
+      "SkillSummary": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "description": { "type": "string" },
+          "lang": { "type": "string" },
+          "mode": { "type": "string" }
+        }
+      },
+      "SkillFileEntry": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File path within the skill archive" },
+          "content": { "type": "string", "description": "File content (text files only)" },
+          "size_bytes": { "type": "integer", "description": "File size in bytes" }
+        }
+      },
+      "File": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "tenant_id": { "type": "string" },
+          "session_id": { "type": "string" },
+          "execution_id": { "type": "string" },
+          "name": { "type": "string" },
+          "content_type": { "type": "string" },
+          "size_bytes": { "type": "integer" },
+          "s3_key": { "type": "string" },
+          "version": { "type": "integer" },
+          "parent_id": { "type": "string", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SandboxExecRequest": {
+        "type": "object",
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to execute"
+          },
+          "workdir": {
+            "type": "string",
+            "description": "Working directory (default: /sandbox/session)"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Command timeout in milliseconds (default: 30000)"
+          }
+        }
+      },
+      "SandboxExecResponse": {
+        "type": "object",
+        "properties": {
+          "stdout": { "type": "string" },
+          "stderr": { "type": "string" },
+          "exit_code": { "type": "integer" }
+        }
+      },
+      "SandboxReadRequest": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path in the sandbox"
+          }
+        }
+      },
+      "SandboxReadResponse": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "string" },
+          "size": { "type": "integer" }
+        }
+      },
+      "SandboxWriteRequest": {
+        "type": "object",
+        "required": ["path", "content"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path in the sandbox"
+          },
+          "content": {
+            "type": "string",
+            "description": "File content to write"
+          },
+          "append": {
+            "type": "boolean",
+            "description": "Append to existing file instead of overwriting"
+          }
+        }
+      },
+      "SandboxListRequest": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path in the sandbox"
+          },
+          "max_depth": {
+            "type": "integer",
+            "description": "Maximum recursion depth (default: 2)"
+          }
+        }
+      },
+      "SandboxListResponse": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SandboxDirEntry" }
+          }
+        }
+      },
+      "SandboxDirEntry": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "is_dir": { "type": "boolean" },
+          "size": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

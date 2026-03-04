@@ -1,0 +1,68 @@
+---
+title: Quick Start
+description: Get Skillbox running in 5 minutes
+---
+
+# Quick Start
+
+This guide gets the Skillbox server running locally and executes your first skill.
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+
+## Step 1: Clone and Start the Stack
+
+```bash
+git clone https://github.com/devs-group/skillbox.git && cd skillbox
+docker compose -f deploy/docker/docker-compose.yml up -d
+```
+
+This starts the Skillbox server, PostgreSQL, MinIO, and OpenSandbox. The server is ready when `http://localhost:8080/health` returns `200`.
+
+## Step 2: Create an API Key
+
+```bash
+bash scripts/seed-apikey.sh
+export SKILLBOX_API_KEY=sk-...  # use the key printed by the script
+```
+
+## Step 3: Install the CLI and Push a Skill
+
+```bash
+go install github.com/devs-group/skillbox/cmd/skillbox@latest
+skillbox skill push examples/skills/data-analysis --server http://localhost:8080
+```
+
+## Step 4: Run the Skill
+
+### Using the CLI
+
+```bash
+skillbox run data-analysis --input '{"data": [{"name": "Alice", "age": 30}]}'
+```
+
+### Using curl
+
+```bash
+curl -s http://localhost:8080/v1/executions \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"skill": "data-analysis", "input": {"data": [{"name": "Alice", "age": 30}]}}' | jq .
+```
+
+### Using the Python SDK
+
+```python
+from skillbox import Client
+
+client = Client("http://localhost:8080", "sk-your-key")
+result = client.run("data-analysis", input={"data": [{"name": "Alice", "age": 30}]})
+print(result.output)
+```
+
+## What's Next
+
+- [Installation](./installation) — server, CLI, and SDK setup in detail
+- Concepts — how skills, sessions, and the sandbox work
+- Guides — writing skills, using the LangChain integration, deploying to production

@@ -1,0 +1,109 @@
+---
+title: Python SDK
+description: Zero-dependency Python client for the Skillbox API
+---
+
+The Python SDK is a single-file client with no dependencies beyond the standard library.
+
+## Installation
+
+Copy `skillbox.py` from the repository into your project:
+
+```bash
+curl -o skillbox.py https://raw.githubusercontent.com/devs-group/skillbox/main/sdks/python/skillbox.py
+```
+
+## Creating a Client
+
+```python
+from skillbox import Client
+
+# Basic client
+client = Client("http://localhost:8080", "sk-your-api-key")
+
+# With tenant
+client = Client(base_url, api_key, tenant_id="my-team")
+```
+
+If `api_key` is an empty string, the client falls back to the `SKILLBOX_API_KEY` environment variable.
+
+## Running a Skill
+
+```python
+result = client.run("data-analysis", input={"data": [1, 2, 3]})
+print(result.status, result.output)
+```
+
+### RunResult Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `execution_id` | `str` | Unique ID for this execution |
+| `status` | `str` | `success`, `error`, or `timeout` |
+| `output` | `Any` | Deserialized skill output |
+| `files_url` | `str` | URL to download output files |
+| `files_list` | `list[str]` | Names of produced output files |
+| `logs` | `str` | Captured stdout/stderr |
+| `duration_ms` | `int` | Wall-clock execution time |
+| `error` | `str` | Error message if status is `error` |
+| `has_files` | `bool` (property) | `True` if output files are present |
+
+## Downloading File Artifacts
+
+```python
+if result.has_files:
+    client.download_files(result, "./output")
+```
+
+## Data Types
+
+**`Skill`** — summary returned by `list_skills`:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Skill identifier |
+| `version` | Current version string |
+| `description` | Short description |
+| `lang` | Runtime language |
+
+**`SkillDetail`** — full detail returned by `get_skill`, extends `Skill` with:
+
+| Field | Description |
+|-------|-------------|
+| `image` | Container image used |
+| `instructions` | Prompt or instruction text |
+| `timeout` | Execution timeout in seconds |
+| `resources` | CPU/memory resource limits |
+
+## File Operations
+
+| Method | Description |
+|--------|-------------|
+| `upload_file` | Upload a file to the workspace |
+| `list_files` | List files in the workspace |
+| `get_file` | Get file metadata |
+| `download_file` | Download a file by name |
+| `update_file` | Replace a file's contents |
+| `delete_file` | Remove a file from the workspace |
+
+## Skill Management
+
+| Method | Description |
+|--------|-------------|
+| `upload_skill` | Deploy a new skill or update an existing one |
+| `list_skills` | List all available skills |
+| `get_skill` | Retrieve full skill details |
+| `delete_skill` | Remove a skill |
+
+## Sandbox Shell
+
+The sandbox shell methods give direct access to the execution environment for a session.
+
+| Method | Description |
+|--------|-------------|
+| `sandbox_execute` | Run a shell command inside the sandbox |
+| `sandbox_read_file` | Read a file from the sandbox filesystem |
+| `sandbox_write_file` | Write a file to the sandbox filesystem |
+| `sandbox_list_dir` | List a sandbox directory |
+| `sandbox_sync` | Sync workspace files into the sandbox |
+| `sandbox_destroy` | Tear down the sandbox session |

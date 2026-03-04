@@ -1,0 +1,83 @@
+---
+title: Execution Model
+description: How skills run inside sandboxes
+---
+
+Each skill execution follows a fixed lifecycle from API request to response. The runtime handles scheduling, sandboxing, I/O, and cleanup automatically.
+
+## Execution Lifecycle
+
+1. Agent sends `POST /v1/executions` with skill name, version, and input.
+2. Auth middleware validates the Bearer token via SHA-256 hash lookup; tenant is derived from the API key record.
+3. Handler validates the request and creates an execution record with status `running`.
+4. Skill registry loads the skill archive from MinIO, extracts it, and parses `SKILL.md`.
+5. Runner validates the declared image against the server allowlist.
+6. Runner creates a temporary working directory with `scripts/` (read-only), `out/` (read-write), and `input.json`.
+7. Sandbox is created via OpenSandbox with full network isolation and resource limits applied.
+8. Runner waits for the container to exit, subject to the deadline set by `context.Done()`.
+9. Output is collected: `output.json` is read, files in `out/files/` are archived and uploaded to MinIO.
+10. Cleanup: sandbox is destroyed, temp workdir is deleted, execution record is updated.
+11. Response is returned with `execution_id`, `status`, `output`, `files_url`, and `duration_ms`.
+
+## I/O Contract
+
+### Input
+
+Input is delivered two ways so scripts can use whichever is more convenient:
+
+- Environment variable: `SANDBOX_INPUT` contains the JSON payload as a string.
+- File: `/sandbox/input.json` contains the same payload.
+
+The markdown body of `SKILL.md` is available via the `SKILL_INSTRUCTIONS` environment variable.
+
+### Output
+
+Write a JSON object to the path in `SANDBOX_OUTPUT` (default `/sandbox/out/output.json`).
+
+### Files
+
+Write any output files to `SANDBOX_FILES_DIR` (default `/sandbox/out/files/`). They are archived and uploaded to MinIO; a download URL is returned in the response.
+
+### Signaling Failure
+
+Exit with a non-zero code. The execution record will be marked `failed` and stderr will be captured in the response.
+
+## Reading Input
+
+```python
+# Python
+import os, json
+
+input_data = json.loads(os.environ["SANDBOX_INPUT"])
+# or: json.load(open("/sandbox/input.json"))
+```
+
+```javascript
+// Node.js
+const input = JSON.parse(process.env.SANDBOX_INPUT);
+```
+
+```bash
+# Bash
+input=$(cat /sandbox/input.json)
+```
+
+## Writing Output
+
+```python
+import os, json
+
+output_path = os.environ.get("SANDBOX_OUTPUT", "/sandbox/out/output.json")
+with open(output_path, "w") as f:
+    json.dump({"result": "ok", "rows": 42}, f)
+```
+
+## Filesystem Layout Inside the Container
+
+| Path | Mode | Description |
+|---|---|---|
+| `/sandbox/scripts/` | read-only | Skill scripts from the archive |
+| `/sandbox/input.json` | read-only | Input payload |
+| `/sandbox/out/` | read-write | Output directory |
+| `/tmp` | read-write (64MB tmpfs) | Scratch space |
+| `/root` | read-write (1MB tmpfs) | Home directory |

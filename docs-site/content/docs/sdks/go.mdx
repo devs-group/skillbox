@@ -1,0 +1,103 @@
+---
+title: Go SDK
+description: Zero-dependency Go client for the Skillbox API
+---
+
+The Go SDK is a single-file client with no dependencies beyond the standard library.
+
+## Installation
+
+```bash
+go get github.com/devs-group/skillbox/sdks/go
+```
+
+## Creating a Client
+
+```go
+import skillbox "github.com/devs-group/skillbox/sdks/go"
+
+// Basic client
+client := skillbox.New("http://localhost:8080", "sk-your-api-key")
+
+// With tenant
+client := skillbox.New(baseURL, apiKey, skillbox.WithTenant("my-team"))
+```
+
+If `apiKey` is an empty string, the client falls back to the `SKILLBOX_API_KEY` environment variable.
+
+## Running a Skill
+
+```go
+result, err := client.Run(ctx, skillbox.RunRequest{
+    Skill: "data-analysis",
+    Input: json.RawMessage(`{"data": [1, 2, 3]}`),
+})
+fmt.Println(result.Status, string(result.Output))
+```
+
+### RunRequest Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Skill` | `string` | Skill name to execute |
+| `Version` | `string` | Specific skill version (optional) |
+| `Input` | `json.RawMessage` | JSON input payload |
+| `Env` | `map[string]string` | Environment variables for the run |
+| `InputFiles` | `[]string` | File paths to make available |
+| `Entrypoint` | `string` | Override the skill entrypoint |
+| `SessionID` | `string` | Attach run to an existing session |
+| `MountOnly` | `bool` | Mount files without executing |
+
+### RunResult Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ExecutionID` | `string` | Unique ID for this execution |
+| `Status` | `string` | `success`, `error`, or `timeout` |
+| `Output` | `json.RawMessage` | Skill output payload |
+| `FilesURL` | `string` | URL to download output files |
+| `FilesList` | `[]string` | Names of produced output files |
+| `Logs` | `string` | Captured stdout/stderr |
+| `DurationMs` | `int64` | Wall-clock execution time |
+| `Error` | `string` | Error message if status is `error` |
+
+## Downloading File Artifacts
+
+```go
+if result.HasFiles() {
+    err = client.DownloadFiles(ctx, result, "./output")
+}
+```
+
+## File Operations
+
+| Method | Description |
+|--------|-------------|
+| `UploadFile` | Upload a file to the workspace |
+| `ListFiles` | List files in the workspace |
+| `GetFile` | Get file metadata |
+| `DownloadFile` | Download a file by name |
+| `UpdateFile` | Replace a file's contents |
+| `DeleteFile` | Remove a file from the workspace |
+
+## Skill Management
+
+| Method | Description |
+|--------|-------------|
+| `UploadSkill` | Deploy a new skill or update an existing one |
+| `ListSkills` | List all available skills |
+| `GetSkill` | Retrieve skill details |
+| `DeleteSkill` | Remove a skill |
+
+## Sandbox Shell
+
+The sandbox shell methods give direct access to the execution environment for a session.
+
+| Method | Description |
+|--------|-------------|
+| `SandboxExecute` | Run a shell command inside the sandbox |
+| `SandboxReadFile` | Read a file from the sandbox filesystem |
+| `SandboxWriteFile` | Write a file to the sandbox filesystem |
+| `SandboxListDir` | List a sandbox directory |
+| `SandboxSync` | Sync workspace files into the sandbox |
+| `SandboxDestroy` | Tear down the sandbox session |

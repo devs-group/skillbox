@@ -1,0 +1,13 @@
+{
+  "title": "Guides",
+  "pages": [
+    "write-your-first-skill",
+    "skill-authoring",
+    "agent-integration",
+    "deploy-docker",
+    "deploy-kubernetes",
+    "configuration",
+    "file-management",
+    "session-workflows"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "title": "API Reference",
+  "pages": [
+    "index",
+    "---",
+    "health",
+    "executions",
+    "skills",
+    "files",
+    "sessions",
+    "sandbox"
+  ]
+}

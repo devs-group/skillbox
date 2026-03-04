@@ -1,0 +1,119 @@
+---
+title: Agent Integration
+description: Connect Skillbox to your AI agent framework
+---
+
+Each skill published to Skillbox automatically exposes a structured interface — name, description, and input/output schema — that maps directly to a tool call in any agent framework.
+
+## How agents discover skills
+
+The agent pattern is:
+
+1. List available skills (`GET /v1/skills`)
+2. Read the skill's `SKILL.md` instructions to understand inputs and behavior
+3. Select the appropriate skill for the current task
+4. Execute the skill with structured input (`POST /v1/executions`)
+5. Process the structured output
+
+## Go SDK
+
+```go
+import (
+    "context"
+    skillbox "github.com/your-org/skillbox-go"
+)
+
+client := skillbox.NewClient("http://localhost:8080", os.Getenv("SKILLBOX_API_KEY"))
+
+// List available skills
+skills, err := client.Skills.List(context.Background(), nil)
+
+// Execute a skill
+exec, err := client.Executions.Run(context.Background(), &skillbox.RunRequest{
+    Skill: "word-counter",
+    Input: map[string]any{"text": "hello world"},
+})
+
+// Poll until complete
+result, err := client.Executions.Wait(context.Background(), exec.ID)
+fmt.Println(result.Output)
+```
+
+## Python SDK
+
+```python
+from skillbox import SkillboxClient
+
+client = SkillboxClient(
+    base_url="http://localhost:8080",
+    api_key=os.environ["SKILLBOX_API_KEY"],
+)
+
+# List available skills
+skills = client.skills.list()
+
+# Execute a skill and wait for the result
+result = client.executions.run_sync(
+    skill="word-counter",
+    input={"text": "hello world"},
+)
+print(result.output)
+```
+
+## LangChain / LangGraph integration
+
+`build_skillbox_toolkit` converts your published skills into LangChain-compatible tools. Pass those tools to any agent:
+
+```python
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+from skillbox.langchain import build_skillbox_toolkit
+
+tools = build_skillbox_toolkit(
+    base_url="http://localhost:8080",
+    api_key=os.environ["SKILLBOX_API_KEY"],
+)
+
+agent = create_react_agent(
+    ChatAnthropic(model="claude-sonnet-4-6"),
+    tools,
+)
+
+response = agent.invoke({"messages": [{"role": "user", "content": "Count the words in: hello world hello"}]})
+```
+
+Each skill becomes a tool whose description is derived from the skill's `SKILL.md` instructions and whose input schema matches the skill's declared inputs.
+
+## File handling in agent workflows
+
+When a skill requires file input, upload the file first and pass the file ID in the execution request:
+
+```python
+# Upload a file
+file_record = client.files.upload("report.csv")
+
+# Reference it in an execution
+result = client.executions.run_sync(
+    skill="csv-analyzer",
+    input={"column": "revenue"},
+    input_files=[file_record.id],
+)
+```
+
+The file is injected at `/sandbox/input/report.csv` inside the sandbox. See [File Management](./file-management) for full details.
+
+## Multi-skill pipelines
+
+Chain executions by passing the output of one skill as the input to the next:
+
+```python
+# Step 1: extract entities
+entities = client.executions.run_sync("entity-extractor", input={"text": raw_text})
+
+# Step 2: classify each entity
+for entity in entities.output["entities"]:
+    label = client.executions.run_sync("entity-classifier", input=entity)
+    print(label.output)
+```
+
+For stateful multi-step pipelines, use [Session Workflows](./session-workflows) to share a persistent sandbox between executions.

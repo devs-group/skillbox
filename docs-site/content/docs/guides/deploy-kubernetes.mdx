@@ -1,0 +1,147 @@
+---
+title: Deploy to Kubernetes
+description: Production deployment with Kustomize or Helm
+---
+
+Skillbox ships Kustomize bases and a Helm chart for Kubernetes deployment. Both approaches produce the same set of resources.
+
+## Kustomize
+
+### Base install
+
+```bash
+kubectl apply -k deploy/k8s/base
+```
+
+This creates the `skillbox` namespace and deploys PostgreSQL, MinIO, OpenSandbox, and the Skillbox API.
+
+### Overlays
+
+Two overlays are included:
+
+```bash
+# Development — relaxed resource limits, no replicas
+kubectl apply -k deploy/k8s/overlays/dev
+
+# Production — resource limits, PodDisruptionBudget, anti-affinity rules
+kubectl apply -k deploy/k8s/overlays/prod
+```
+
+Customize overlays by patching the base:
+
+```yaml
+# deploy/k8s/overlays/prod/patch-api-replicas.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skillbox-api
+spec:
+  replicas: 3
+```
+
+## Helm
+
+```bash
+helm install skillbox deploy/helm/skillbox/ \
+  --namespace skillbox \
+  --create-namespace \
+  --set postgres.password=changeme \
+  --set minio.secretKey=changeme \
+  --set opensandbox.apiKey=changeme
+```
+
+To upgrade:
+
+```bash
+helm upgrade skillbox deploy/helm/skillbox/ --namespace skillbox
+```
+
+## Security
+
+### Namespace isolation
+
+All Skillbox resources run in the `skillbox` namespace. Apply a default-deny `NetworkPolicy` to block unintended cross-namespace traffic:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: skillbox
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+```
+
+Then add allow rules only for the specific ports each service needs.
+
+### Pod Security Standards
+
+Label the namespace to enforce the restricted Pod Security Standard:
+
+```bash
+kubectl label namespace skillbox \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest
+```
+
+### RBAC
+
+Each component runs under a dedicated `ServiceAccount` with the minimum permissions required. No component uses the `default` service account or requests `cluster-admin` rights.
+
+## Horizontal scaling
+
+The Skillbox API server is stateless. Scale it independently of the data services:
+
+```bash
+kubectl scale deployment skillbox-api --replicas=4 -n skillbox
+```
+
+Place a `Service` of type `ClusterIP` in front of the API pods. Expose it externally through your cluster's ingress controller — the Kustomize base and Helm chart do not include an `Ingress` resource because ingress configuration is cluster-specific.
+
+## Ingress
+
+Configure ingress based on your cluster's controller. Example for NGINX Ingress Controller:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: skillbox-api
+  namespace: skillbox
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: skillbox.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: skillbox-api
+                port:
+                  number: 8080
+```
+
+## Untrusted code isolation
+
+For workloads that execute untrusted skills, run the OpenSandbox pods under a sandboxed runtime:
+
+```yaml
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+```
+
+```yaml
+# In the OpenSandbox Deployment spec
+spec:
+  runtimeClassName: gvisor
+```
+
+Kata Containers is an alternative if gVisor is not available in your environment.

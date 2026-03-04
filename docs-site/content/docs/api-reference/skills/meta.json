@@ -1,0 +1,4 @@
+{
+  "title": "Skills",
+  "pages": ["uploadSkill", "listSkills", "getSkill", "getSkillFiles", "deleteSkill"]
+}

@@ -1,0 +1,54 @@
+---
+title: Introduction
+description: What is Skillbox and why it exists
+---
+
+# Introduction
+
+**Your agents need a sandbox. Don't build one.**
+
+Skillbox is a self-hosted execution runtime and skills registry for AI agents. It gives your agents a safe, structured place to run code, discover capabilities, and return structured results — without the overhead of building sandboxing infrastructure yourself.
+
+## What is Skillbox?
+
+AI agents need to call tools. Those tools need to run somewhere. That somewhere needs to be isolated, auditable, and return data your agent can actually use — not raw stdout that has to be parsed.
+
+Skillbox is that runtime. You deploy it alongside your agent infrastructure, push skills to it, and your agents call them via a simple HTTP API. Results come back as structured JSON. No stdout parsing. No escape hatches.
+
+## Key Value Props
+
+**Self-hosted**
+Run Skillbox inside your own infrastructure. No data leaves your environment. This matters for GDPR compliance and the EU AI Act, where data residency and auditability are requirements, not nice-to-haves.
+
+**Structured JSON I/O**
+Every skill takes a JSON input and returns a JSON output. Your agent code calls an HTTP endpoint and gets back a typed response. There is no stdout to parse, no format negotiation.
+
+**Skills Registry**
+Skills are versioned, named, and discoverable. Agents can list available skills, inspect their input/output schemas, and call them by name. The registry is the contract between your agents and their tools.
+
+**Sandbox Execution**
+Skills run inside OpenSandbox with six layers of security: process isolation, filesystem restrictions, network controls, resource limits, syscall filtering, and time bounds. A misbehaving skill cannot affect the host or other skills.
+
+**LangChain-Ready**
+Skillbox exposes a 1:1 LangChain tool mapping. Each skill in the registry becomes a LangChain tool with no extra wiring. Drop Skillbox into an existing LangChain agent and your skills are immediately available.
+
+**Zero-Dependency SDKs**
+The Go SDK and the Python SDK have no external dependencies. The Python SDK is a single file you copy into your project. The Go SDK uses only the standard library. Vendoring works without ceremony.
+
+## How it Compares
+
+| Feature | Skillbox | E2B | Modal | Daytona |
+|---|---|---|---|---|
+| Self-hosted | Yes | No | No | Yes |
+| Skills registry | Yes | No | No | No |
+| Structured JSON I/O | Yes | No | No | No |
+| Agent introspection | Yes | Partial | No | No |
+| LangChain-native | Yes | No | No | No |
+| Network disabled by default | Yes | No | No | No |
+| Zero-dep SDK | Yes | No | No | No |
+| File management | Yes | Yes | No | Yes |
+| License | MIT | Proprietary | Proprietary | Apache 2.0 |
+
+## Who Builds It
+
+Skillbox is built by [devs group](https://devs-group.com), based in Kreuzlingen, Switzerland. It is released under the MIT license.
