@@ -73,11 +73,14 @@ func main() {
 		slog.Warn("orphan cleanup failed", "error", err)
 	}
 
+	// Initialize session manager for sandbox shell API
+	sessMgr := sandbox.NewSessionManager(sbClient, db, collector, cfg)
+
 	// Initialize runner
 	r := runner.New(cfg, sbClient, reg, db, collector)
 
 	// Build router
-	router := api.NewRouter(cfg, db, r, reg, collector)
+	router := api.NewRouter(cfg, db, r, reg, sessMgr, collector)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -90,6 +93,20 @@ func main() {
 	// Graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Start background session sandbox cleanup goroutine
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sessMgr.Cleanup(context.Background(), cfg.SandboxSessionTTL)
+			}
+		}
+	}()
 
 	// Start HTTP server
 	go func() {
@@ -106,6 +123,9 @@ func main() {
 	// Stop HTTP server gracefully
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Sync and destroy all managed session sandboxes
+	sessMgr.Shutdown(shutdownCtx)
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("http server shutdown error", "error", err)

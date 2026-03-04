@@ -80,6 +80,16 @@ type RunRequest struct {
 	// (e.g. "analysis.py" instead of "main.py"). The path is relative to the
 	// skill's root directory.
 	Entrypoint string `json:"entrypoint,omitempty"`
+
+	// SessionID links this execution to a persistent session workspace. Files
+	// written to /sandbox/out/session/ are preserved and re-mounted on the
+	// next execution in the same session.
+	SessionID string `json:"session_id,omitempty"`
+
+	// MountOnly skips command execution and only mounts skill files into the
+	// sandbox. Use this with cognitive skills where the agent drives execution
+	// via the sandbox shell API.
+	MountOnly bool `json:"mount_only,omitempty"`
 }
 
 // RunResult is the response returned after a skill execution completes.
@@ -121,6 +131,7 @@ type Skill struct {
 	Version     string `json:"version"`
 	Description string `json:"description"`
 	Lang        string `json:"lang,omitempty"`
+	Mode        string `json:"mode,omitempty"`
 }
 
 // SkillDetail is the full skill definition returned by GetSkill, including
@@ -135,6 +146,7 @@ type SkillDetail struct {
 	Instructions string            `json:"instructions,omitempty"`
 	Timeout      string            `json:"timeout,omitempty"`
 	Resources    map[string]string `json:"resources,omitempty"`
+	Mode         string            `json:"mode"`
 }
 
 // FileInfo represents a file record from the Skillbox API.
@@ -166,6 +178,34 @@ type SkillFileEntry struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	SizeBytes int    `json:"size_bytes"`
+}
+
+// SandboxExecRequest describes a command to execute in a session sandbox.
+type SandboxExecRequest struct {
+	// Command is the bash command string to execute.
+	Command string `json:"command"`
+
+	// WorkDir sets the working directory for the command. Defaults to
+	// /sandbox/session if empty.
+	WorkDir string `json:"workdir,omitempty"`
+
+	// TimeoutMs is the maximum execution time in milliseconds. Defaults to
+	// 30000 (30 seconds) if zero.
+	TimeoutMs int `json:"timeout_ms,omitempty"`
+}
+
+// SandboxExecResponse holds the result of a sandbox command execution.
+type SandboxExecResponse struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+// SandboxDirEntry describes a single entry in a sandbox directory listing.
+type SandboxDirEntry struct {
+	Path  string `json:"path"`
+	IsDir bool   `json:"is_dir"`
+	Size  int64  `json:"size"`
 }
 
 // Option configures a [Client]. Pass options to [New].
@@ -778,6 +818,198 @@ func (c *Client) ListFileVersions(ctx context.Context, id string) ([]FileInfo, e
 }
 
 // --------------------------------------------------------------------
+// Session Workspace
+// --------------------------------------------------------------------
+
+// ListSessionFiles returns all files in a session workspace.
+func (c *Client) ListSessionFiles(ctx context.Context, sessionID string) ([]FileInfo, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/sessions/"+sessionID+"/files", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var files []FileInfo
+	if err := c.decodeResponse(resp, &files); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// GetSessionFile retrieves the content of a specific file from a session
+// workspace. The caller is responsible for closing the returned reader.
+func (c *Client) GetSessionFile(ctx context.Context, sessionID, filename string) (io.ReadCloser, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/sessions/"+sessionID+"/files/"+filename, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close() //nolint:errcheck
+		return nil, c.parseAPIError(resp)
+	}
+	return resp.Body, nil
+}
+
+// DeleteSessionFile removes a specific file from a session workspace.
+func (c *Client) DeleteSessionFile(ctx context.Context, sessionID, filename string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/sessions/"+sessionID+"/files/"+filename, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// DeleteSession removes a session and all its associated files.
+func (c *Client) DeleteSession(ctx context.Context, sessionID string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/sessions/"+sessionID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------
+// Sandbox Shell
+// --------------------------------------------------------------------
+
+// SandboxExecute runs a bash command inside the session's sandbox. The
+// sandbox is created automatically on first use and persists for the
+// session's lifetime.
+func (c *Client) SandboxExecute(ctx context.Context, sessionID string, req SandboxExecRequest) (*SandboxExecResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: marshal sandbox exec request: %w", err)
+	}
+
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/execute", sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var result SandboxExecResponse
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// SandboxReadFile reads the content of a file inside the session sandbox.
+func (c *Client) SandboxReadFile(ctx context.Context, sessionID, path string) (string, error) {
+	body, _ := json.Marshal(struct {
+		Path string `json:"path"`
+	}{Path: path})
+
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/read-file", sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var result struct {
+		Content string `json:"content"`
+		Size    int64  `json:"size"`
+	}
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+// SandboxWriteFile writes content to a file inside the session sandbox.
+// When appendFlag is true, the content is appended to the existing file.
+func (c *Client) SandboxWriteFile(ctx context.Context, sessionID, path, content string, appendFlag bool) error {
+	body, _ := json.Marshal(struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		Append  bool   `json:"append,omitempty"`
+	}{Path: path, Content: content, Append: appendFlag})
+
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/write-file", sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// SandboxListDir lists directory contents inside the session sandbox.
+// maxDepth controls recursion depth (0 uses the server default of 2).
+func (c *Client) SandboxListDir(ctx context.Context, sessionID, path string, maxDepth int) ([]SandboxDirEntry, error) {
+	body, _ := json.Marshal(struct {
+		Path     string `json:"path"`
+		MaxDepth int    `json:"max_depth,omitempty"`
+	}{Path: path, MaxDepth: maxDepth})
+
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/list-dir", sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var result struct {
+		Entries []SandboxDirEntry `json:"entries"`
+	}
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result.Entries, nil
+}
+
+// SandboxSync persists the session sandbox's workspace files to MinIO
+// so they survive sandbox restarts.
+func (c *Client) SandboxSync(ctx context.Context, sessionID string) error {
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/sync", sessionID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// SandboxDestroy tears down the session's sandbox. This does not delete
+// the session or its persisted files — only the running sandbox instance.
+func (c *Client) SandboxDestroy(ctx context.Context, sessionID string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/sandbox/"+sessionID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------
 // Internal helpers
 // --------------------------------------------------------------------
 
@@ -792,6 +1024,30 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 	}
 
 	c.setHeaders(req)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: %s %s: %w", method, path, err)
+	}
+
+	return resp, nil
+}
+
+// doSessionRequest is like doRequest but additionally sets the X-Session-ID
+// header required by sandbox shell endpoints.
+func (c *Client) doSessionRequest(ctx context.Context, method, path, sessionID string, body io.Reader) (*http.Response, error) {
+	url := c.baseURL + path
+
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: create request: %w", err)
+	}
+
+	c.setHeaders(req)
+	req.Header.Set("X-Session-ID", sessionID)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

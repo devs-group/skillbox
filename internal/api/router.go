@@ -9,6 +9,7 @@ import (
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
+	"github.com/devs-group/skillbox/internal/sandbox"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -21,7 +22,7 @@ import (
 // The router uses gin.New() (no default middleware) and explicitly adds
 // Recovery and structured RequestLogger middleware so the log output is
 // fully controlled.
-func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, col ...*artifacts.Collector) *gin.Engine {
+func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, sm *sandbox.SessionManager, col ...*artifacts.Collector) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(middleware.RequestLogger())
@@ -59,6 +60,30 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 				files.PUT("/:id", filesHandler.Update)
 				files.DELETE("/:id", filesHandler.Delete)
 				files.GET("/:id/versions", filesHandler.Versions)
+			}
+
+			// Session workspace endpoints
+			sessionsHandler := handlers.NewSessionsHandler(s, col[0])
+			sessions := v1.Group("/sessions")
+			{
+				sessions.GET("/:external_id/files", sessionsHandler.ListFiles)
+				sessions.GET("/:external_id/files/:filename", sessionsHandler.DownloadFile)
+				sessions.DELETE("/:external_id/files/:filename", sessionsHandler.DeleteFile)
+				sessions.DELETE("/:external_id", sessionsHandler.Delete)
+			}
+		}
+
+		// Sandbox shell endpoints
+		if sm != nil {
+			sandboxHandler := handlers.NewSandboxHandler(sm)
+			sbGroup := v1.Group("/sandbox")
+			{
+				sbGroup.POST("/execute", sandboxHandler.Execute)
+				sbGroup.POST("/read-file", sandboxHandler.ReadFile)
+				sbGroup.POST("/write-file", sandboxHandler.WriteFile)
+				sbGroup.POST("/list-dir", sandboxHandler.ListDir)
+				sbGroup.POST("/sync", sandboxHandler.Sync)
+				sbGroup.DELETE("/:session", sandboxHandler.Destroy)
 			}
 		}
 	}

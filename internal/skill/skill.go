@@ -47,6 +47,7 @@ type frontmatter struct {
 	Image       string    `yaml:"image,omitempty"`
 	Timeout     string    `yaml:"timeout,omitempty"`
 	Resources   Resources `yaml:"resources,omitempty"`
+	Mode        string    `yaml:"mode,omitempty"`
 }
 
 // Skill is the fully parsed and validated representation of a SKILL.md file.
@@ -59,6 +60,7 @@ type Skill struct {
 	Timeout      time.Duration
 	Resources    Resources
 	Instructions string // body text after the frontmatter
+	Mode         string // "executable" (default) or "cognitive"
 }
 
 // ParseSkillMD extracts the YAML frontmatter (between two "---" lines)
@@ -80,6 +82,11 @@ func ParseSkillMD(data []byte) (*Skill, error) {
 		version = "0.0.0"
 	}
 
+	mode := f.Mode
+	if mode == "" {
+		mode = "executable"
+	}
+
 	s := &Skill{
 		Name:         f.Name,
 		Version:      version,
@@ -88,6 +95,7 @@ func ParseSkillMD(data []byte) (*Skill, error) {
 		Image:        f.Image,
 		Resources:    f.Resources,
 		Instructions: strings.TrimSpace(body),
+		Mode:         mode,
 	}
 
 	// Parse timeout if provided.
@@ -125,6 +133,9 @@ func (s *Skill) Validate() error {
 	if s.Lang != "" && !validLangs[s.Lang] {
 		errs = append(errs, fmt.Sprintf("lang %q is not supported (use python, node, or bash)", s.Lang))
 	}
+	if s.Mode != "" && s.Mode != "executable" && s.Mode != "cognitive" {
+		errs = append(errs, fmt.Sprintf("mode %q is not supported (use executable or cognitive)", s.Mode))
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid skill: %s", strings.Join(errs, "; "))
@@ -142,6 +153,7 @@ type SkillMetadata struct {
 	Instructions string    `json:"instructions,omitempty"`
 	Timeout      string    `json:"timeout,omitempty"`
 	Resources    Resources `json:"resources,omitempty"`
+	Mode         string    `json:"mode"`
 }
 
 // SkillSummary is the compact representation returned by list endpoints.
@@ -151,6 +163,7 @@ type SkillSummary struct {
 	Version     string `json:"version"`
 	Description string `json:"description"`
 	Lang        string `json:"lang"`
+	Mode        string `json:"mode"`
 }
 
 // ValidateName checks that a skill name contains only safe characters.

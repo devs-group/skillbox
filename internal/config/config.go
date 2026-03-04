@@ -42,6 +42,11 @@ type Config struct {
 	MaxSkillSize           int64   // bytes
 	MaxConcurrentExecs     int     // max parallel sandbox executions
 
+	// Sandbox session management
+	SandboxSessionTTL   time.Duration // idle TTL for session sandboxes
+	SandboxSessionImage string        // default image for session sandboxes
+	MaxSessionSandboxes int           // max concurrent session sandboxes per server
+
 	// Server
 	APIPort           string
 
@@ -200,6 +205,25 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SKILLBOX_MAX_CONCURRENT_EXECS must be positive, got %d", maxConcurrent)
 	}
 	cfg.MaxConcurrentExecs = maxConcurrent
+
+	// Sandbox session TTL
+	cfg.SandboxSessionTTL, err = time.ParseDuration(envOrDefault("SKILLBOX_SANDBOX_SESSION_TTL", "30m"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SANDBOX_SESSION_TTL: %w", err)
+	}
+
+	// Sandbox session image
+	cfg.SandboxSessionImage = envOrDefault("SKILLBOX_SANDBOX_SESSION_IMAGE", "python:3.12-slim")
+
+	// Max session sandboxes
+	maxSessions, err := strconv.Atoi(envOrDefault("SKILLBOX_MAX_SESSION_SANDBOXES", "20"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_MAX_SESSION_SANDBOXES: %w", err)
+	}
+	if maxSessions <= 0 {
+		return nil, fmt.Errorf("SKILLBOX_MAX_SESSION_SANDBOXES must be positive, got %d", maxSessions)
+	}
+	cfg.MaxSessionSandboxes = maxSessions
 
 	return cfg, nil
 }

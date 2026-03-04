@@ -129,6 +129,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin
 			Version:     parsedSkill.Version,
 			Description: parsedSkill.Description,
 			Lang:        parsedSkill.Lang,
+			Mode:        parsedSkill.Mode,
 		})
 	}
 }
@@ -310,6 +311,7 @@ func ListSkills(s *store.Store, reg *registry.Registry) gin.HandlerFunc {
 					Version:     rec.Version,
 					Description: rec.Description,
 					Lang:        rec.Lang,
+					Mode:        "executable", // Default; actual mode requires downloading the skill
 				}
 			}
 			c.JSON(http.StatusOK, summaries)
@@ -409,6 +411,7 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			Instructions: parsed.Instructions,
 			Timeout:      timeout,
 			Resources:    parsed.Resources,
+			Mode:         parsed.Mode,
 		})
 	}
 }

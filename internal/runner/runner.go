@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,7 +30,9 @@ type RunRequest struct {
 	Input      json.RawMessage   `json:"input"`
 	Env        map[string]string `json:"env,omitempty"`
 	InputFiles []string          `json:"input_files,omitempty"` // file IDs from POST /v1/files
-	Entrypoint string            `json:"entrypoint,omitempty"` // override the skill's default entrypoint
+	Entrypoint string            `json:"entrypoint,omitempty"`  // override the skill's default entrypoint
+	SessionID  string            `json:"session_id,omitempty"`  // external session ID for workspace persistence
+	MountOnly  bool              `json:"mount_only,omitempty"`  // skip execution, only mount files into sandbox
 	TenantID   string            `json:"-"`
 }
 
@@ -325,6 +328,51 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		return result, nil
 	}
 
+	// Mount session files into the sandbox if a session ID was provided.
+	if req.SessionID != "" {
+		dbSession, sessionErr := r.store.GetOrCreateSession(ctx, req.TenantID, req.SessionID)
+		if sessionErr != nil {
+			log.Printf("runner: failed to get/create session %s: %v", req.SessionID, sessionErr)
+		} else {
+			sessionFiles, listErr := r.store.ListSessionFiles(ctx, req.TenantID, dbSession.ID)
+			if listErr != nil {
+				log.Printf("runner: failed to list session files for %s: %v", dbSession.ID, listErr)
+			} else if len(sessionFiles) > 0 && r.artifacts != nil {
+				var sessionUploads []sandbox.FileUpload
+				for _, sf := range sessionFiles {
+					reader, _, _, dlErr := r.artifacts.DownloadObject(ctx, sf.S3Key)
+					if dlErr != nil {
+						log.Printf("runner: failed to download session file %s: %v", sf.Name, dlErr)
+						continue
+					}
+					content, readErr := io.ReadAll(io.LimitReader(reader, 100<<20))
+					_ = reader.Close()
+					if readErr != nil {
+						log.Printf("runner: failed to read session file %s: %v", sf.Name, readErr)
+						continue
+					}
+					sessionUploads = append(sessionUploads, sandbox.FileUpload{
+						Path:    "/sandbox/session/" + sf.Name,
+						Content: content,
+						Mode:    0o644,
+					})
+				}
+				if len(sessionUploads) > 0 {
+					if uploadErr := r.sandbox.UploadFiles(execCtx, execdURL, sessionUploads); uploadErr != nil {
+						log.Printf("runner: failed to upload session files: %v", uploadErr)
+					}
+				}
+			}
+			// Add session dir placeholder.
+			_ = r.sandbox.UploadFiles(execCtx, execdURL, []sandbox.FileUpload{
+				{Path: "/sandbox/session/.keep", Content: []byte{}, Mode: 0o644},
+				{Path: "/sandbox/out/session/.keep", Content: []byte{}, Mode: 0o644},
+			})
+			// Set env var for session directory.
+			envVars["SANDBOX_SESSION_DIR"] = "/sandbox/session/"
+		}
+	}
+
 	// Step 10a: Allow the caller to override the entrypoint via RunRequest.
 	if req.Entrypoint != "" {
 		loadedSkill.Entrypoint = req.Entrypoint
@@ -358,6 +406,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 			loadedSkill.Skill.Lang = "python"
 		}
 	}
+	// If mount_only is set, skip execution and return immediately.
+	if req.MountOnly {
+		result.Status = "mounted"
+		return result, nil
+	}
+
 	cmd := buildShellCommand(loadedSkill)
 	timeoutMs := int(timeout.Milliseconds())
 
@@ -464,6 +518,56 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 						}
 					}
 				}
+			}
+		}
+	}
+
+	// Persist session output files to MinIO.
+	if req.SessionID != "" && r.artifacts != nil {
+		dbSession, sessionErr := r.store.GetOrCreateSession(ctx, req.TenantID, req.SessionID)
+		if sessionErr != nil {
+			log.Printf("runner: failed to get session for persistence: %v", sessionErr)
+		} else {
+			sessionOutFiles, searchErr := r.sandbox.SearchFiles(execCtx, execdURL, "/sandbox/out/session", "*")
+			if searchErr != nil {
+				log.Printf("runner: failed to search session output files: %v", searchErr)
+			} else {
+				for _, entry := range sessionOutFiles {
+					filename := filepath.Base(entry.Path)
+					if filename == ".keep" {
+						continue
+					}
+					rc, dlErr := r.sandbox.DownloadFile(execCtx, execdURL, entry.Path)
+					if dlErr != nil {
+						log.Printf("runner: failed to download session file %s: %v", entry.Path, dlErr)
+						continue
+					}
+					data, readErr := io.ReadAll(io.LimitReader(rc, 100<<20))
+					_ = rc.Close()
+					if readErr != nil {
+						log.Printf("runner: failed to read session file %s: %v", entry.Path, readErr)
+						continue
+					}
+
+					s3Key := fmt.Sprintf("%s/sessions/%s/%s", req.TenantID, dbSession.ID, filename)
+					if _, upErr := r.artifacts.UploadObject(ctx, s3Key, bytes.NewReader(data), int64(len(data)), detectRunnerContentType(filename)); upErr != nil {
+						log.Printf("runner: failed to upload session file %s: %v", filename, upErr)
+						continue
+					}
+					fileRecord := &store.File{
+						TenantID:    req.TenantID,
+						SessionID:   dbSession.ID,
+						Name:        filename,
+						ContentType: detectRunnerContentType(filename),
+						SizeBytes:   int64(len(data)),
+						S3Key:       s3Key,
+						Version:     1,
+					}
+					if _, createErr := r.store.CreateFile(ctx, fileRecord); createErr != nil {
+						log.Printf("runner: failed to create session file record for %s: %v", filename, createErr)
+					}
+				}
+				_ = r.store.TouchSession(ctx, dbSession.ID)
 			}
 		}
 	}

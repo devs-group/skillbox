@@ -75,7 +75,7 @@ func setupRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock, func()) {
 	// Pass nil runner and nil registry since we are not testing execution
 	// or skill endpoints. Pass nil collector as well; the router skips
 	// file route registration when no collector is provided.
-	router := NewRouter(cfg, st, nil, nil)
+	router := NewRouter(cfg, st, nil, nil, nil)
 
 	return router, mock, func() { db.Close() } //nolint:errcheck
 }
