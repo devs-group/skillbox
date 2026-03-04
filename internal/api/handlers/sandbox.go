@@ -10,6 +10,9 @@ import (
 	"github.com/devs-group/skillbox/internal/sandbox"
 )
 
+// maxSandboxRequestBody is the maximum request body size for sandbox API calls (10 MiB).
+const maxSandboxRequestBody = 10 << 20
+
 // SandboxHandler groups sandbox shell HTTP handlers and their dependencies.
 type SandboxHandler struct {
 	manager *sandbox.SessionManager
@@ -18,6 +21,14 @@ type SandboxHandler struct {
 // NewSandboxHandler creates a handler with the session manager dependency.
 func NewSandboxHandler(sm *sandbox.SessionManager) *SandboxHandler {
 	return &SandboxHandler{manager: sm}
+}
+
+// LimitBody returns middleware that limits the request body size for sandbox endpoints.
+func (h *SandboxHandler) LimitBody() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSandboxRequestBody)
+		c.Next()
+	}
 }
 
 // --- Request / Response types ---
@@ -72,14 +83,31 @@ type SandboxDirEntry struct {
 	Size  int64  `json:"size"`
 }
 
-// --- Handlers ---
+// --- Helpers ---
 
-// Execute handles POST /v1/sandbox/execute.
-func (h *SandboxHandler) Execute(c *gin.Context) {
+// resolveSessionKey extracts tenant + session from the request, calls GetOrCreate,
+// and returns the cache key. On failure it writes the error response and returns false.
+func (h *SandboxHandler) resolveSessionKey(c *gin.Context) (string, bool) {
 	tenantID := middleware.GetTenantID(c)
 	sessionID := c.GetHeader("X-Session-ID")
 	if sessionID == "" {
 		response.RespondError(c, http.StatusBadRequest, "bad_request", "X-Session-ID header is required")
+		return "", false
+	}
+	ms, err := h.manager.GetOrCreate(c.Request.Context(), tenantID, sessionID, sandbox.SandboxSessionOpts{})
+	if err != nil {
+		response.RespondError(c, http.StatusInternalServerError, "sandbox_error", "failed to get or create sandbox: "+err.Error())
+		return "", false
+	}
+	return tenantID + ":" + ms.ExternalID, true
+}
+
+// --- Handlers ---
+
+// Execute handles POST /v1/sandbox/execute.
+func (h *SandboxHandler) Execute(c *gin.Context) {
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
 		return
 	}
 
@@ -95,17 +123,14 @@ func (h *SandboxHandler) Execute(c *gin.Context) {
 	if req.WorkDir == "" {
 		req.WorkDir = "/sandbox/session"
 	}
+	// Validate workdir to prevent directory traversal.
+	if err := sandbox.ValidateSandboxPath(req.WorkDir, sandbox.PathModeRead); err != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "invalid workdir: "+err.Error())
+		return
+	}
 	if req.TimeoutMs <= 0 {
 		req.TimeoutMs = 30000
 	}
-
-	ms, err := h.manager.GetOrCreate(c.Request.Context(), tenantID, sessionID, sandbox.SandboxSessionOpts{})
-	if err != nil {
-		response.RespondError(c, http.StatusInternalServerError, "sandbox_error", "failed to get or create sandbox: "+err.Error())
-		return
-	}
-
-	key := tenantID + ":" + ms.ExternalID
 	result, err := h.manager.Execute(c.Request.Context(), key, req.Command, req.WorkDir, req.TimeoutMs)
 	if err != nil {
 		response.RespondError(c, http.StatusInternalServerError, "execution_error", "command execution failed: "+err.Error())
@@ -121,10 +146,8 @@ func (h *SandboxHandler) Execute(c *gin.Context) {
 
 // ReadFile handles POST /v1/sandbox/read-file.
 func (h *SandboxHandler) ReadFile(c *gin.Context) {
-	tenantID := middleware.GetTenantID(c)
-	sessionID := c.GetHeader("X-Session-ID")
-	if sessionID == "" {
-		response.RespondError(c, http.StatusBadRequest, "bad_request", "X-Session-ID header is required")
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
 		return
 	}
 
@@ -138,13 +161,6 @@ func (h *SandboxHandler) ReadFile(c *gin.Context) {
 		return
 	}
 
-	ms, err := h.manager.GetOrCreate(c.Request.Context(), tenantID, sessionID, sandbox.SandboxSessionOpts{})
-	if err != nil {
-		response.RespondError(c, http.StatusInternalServerError, "sandbox_error", "failed to get or create sandbox: "+err.Error())
-		return
-	}
-
-	key := tenantID + ":" + ms.ExternalID
 	data, err := h.manager.ReadFile(c.Request.Context(), key, req.Path)
 	if err != nil {
 		response.RespondError(c, http.StatusBadRequest, "read_error", "failed to read file: "+err.Error())
@@ -159,10 +175,8 @@ func (h *SandboxHandler) ReadFile(c *gin.Context) {
 
 // WriteFile handles POST /v1/sandbox/write-file.
 func (h *SandboxHandler) WriteFile(c *gin.Context) {
-	tenantID := middleware.GetTenantID(c)
-	sessionID := c.GetHeader("X-Session-ID")
-	if sessionID == "" {
-		response.RespondError(c, http.StatusBadRequest, "bad_request", "X-Session-ID header is required")
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
 		return
 	}
 
@@ -176,21 +190,14 @@ func (h *SandboxHandler) WriteFile(c *gin.Context) {
 		return
 	}
 
-	ms, err := h.manager.GetOrCreate(c.Request.Context(), tenantID, sessionID, sandbox.SandboxSessionOpts{})
-	if err != nil {
-		response.RespondError(c, http.StatusInternalServerError, "sandbox_error", "failed to get or create sandbox: "+err.Error())
-		return
-	}
-
-	key := tenantID + ":" + ms.ExternalID
 	content := req.Content
 	if req.Append {
-		// For append mode, read existing content first and concatenate.
+		// Append mode: read-concat-write. This is not atomic but sandboxes are
+		// single-session so concurrent appends to the same file are unlikely.
 		existing, err := h.manager.ReadFile(c.Request.Context(), key, req.Path)
 		if err == nil {
 			content = string(existing) + content
 		}
-		// If read fails (file doesn't exist), just write the new content.
 	}
 
 	if err := h.manager.WriteFile(c.Request.Context(), key, req.Path, content); err != nil {
@@ -203,10 +210,8 @@ func (h *SandboxHandler) WriteFile(c *gin.Context) {
 
 // ListDir handles POST /v1/sandbox/list-dir.
 func (h *SandboxHandler) ListDir(c *gin.Context) {
-	tenantID := middleware.GetTenantID(c)
-	sessionID := c.GetHeader("X-Session-ID")
-	if sessionID == "" {
-		response.RespondError(c, http.StatusBadRequest, "bad_request", "X-Session-ID header is required")
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
 		return
 	}
 
@@ -223,13 +228,6 @@ func (h *SandboxHandler) ListDir(c *gin.Context) {
 		req.MaxDepth = 2
 	}
 
-	ms, err := h.manager.GetOrCreate(c.Request.Context(), tenantID, sessionID, sandbox.SandboxSessionOpts{})
-	if err != nil {
-		response.RespondError(c, http.StatusInternalServerError, "sandbox_error", "failed to get or create sandbox: "+err.Error())
-		return
-	}
-
-	key := tenantID + ":" + ms.ExternalID
 	entries, err := h.manager.ListDir(c.Request.Context(), key, req.Path, req.MaxDepth)
 	if err != nil {
 		response.RespondError(c, http.StatusBadRequest, "list_error", "failed to list directory: "+err.Error())
@@ -251,14 +249,10 @@ func (h *SandboxHandler) ListDir(c *gin.Context) {
 
 // Sync handles POST /v1/sandbox/sync.
 func (h *SandboxHandler) Sync(c *gin.Context) {
-	tenantID := middleware.GetTenantID(c)
-	sessionID := c.GetHeader("X-Session-ID")
-	if sessionID == "" {
-		response.RespondError(c, http.StatusBadRequest, "bad_request", "X-Session-ID header is required")
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
 		return
 	}
-
-	key := tenantID + ":" + sessionID
 	if err := h.manager.SyncSessionFiles(c.Request.Context(), key); err != nil {
 		response.RespondError(c, http.StatusInternalServerError, "sync_error", "failed to sync session files: "+err.Error())
 		return

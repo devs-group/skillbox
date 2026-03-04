@@ -77,6 +77,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		if sm != nil {
 			sandboxHandler := handlers.NewSandboxHandler(sm)
 			sbGroup := v1.Group("/sandbox")
+			sbGroup.Use(sandboxHandler.LimitBody())
 			{
 				sbGroup.POST("/execute", sandboxHandler.Execute)
 				sbGroup.POST("/read-file", sandboxHandler.ReadFile)

@@ -254,6 +254,13 @@ func (sm *SessionManager) mountSessionFiles(ctx context.Context, tenantID, sessi
 			)
 			continue
 		}
+		// Validate the file name from DB before using in a path.
+		if strings.Contains(f.Name, "..") || strings.HasPrefix(f.Name, "/") {
+			slog.Warn("session manager: skipping file with unsafe name",
+				"name", f.Name,
+			)
+			continue
+		}
 		uploads = append(uploads, FileUpload{
 			Path:    "/sandbox/session/" + f.Name,
 			Content: data,
@@ -533,30 +540,7 @@ func (sm *SessionManager) Cleanup(ctx context.Context, maxIdle time.Duration) {
 
 	for _, key := range expired {
 		slog.Info("session manager: cleaning up idle sandbox", "key", key)
-
-		// Sync files before destroying.
-		if err := sm.SyncSessionFiles(ctx, key); err != nil {
-			slog.Warn("session manager: cleanup sync failed",
-				"key", key,
-				"error", err,
-			)
-		}
-
-		sm.mu.Lock()
-		ms, ok := sm.sessions[key]
-		if ok {
-			delete(sm.sessions, key)
-		}
-		sm.mu.Unlock()
-
-		if ok {
-			if err := sm.client.DeleteSandbox(ctx, ms.SandboxID); err != nil {
-				slog.Warn("session manager: cleanup delete sandbox failed",
-					"sandbox_id", ms.SandboxID,
-					"error", err,
-				)
-			}
-		}
+		sm.syncAndRemove(ctx, key, "cleanup")
 	}
 
 	if len(expired) > 0 {
@@ -577,31 +561,37 @@ func (sm *SessionManager) Shutdown(ctx context.Context) {
 	slog.Info("session manager: shutting down", "active_sandboxes", len(keys))
 
 	for _, key := range keys {
-		if err := sm.SyncSessionFiles(ctx, key); err != nil {
-			slog.Warn("session manager: shutdown sync failed",
-				"key", key,
-				"error", err,
-			)
-		}
-
-		sm.mu.Lock()
-		ms, ok := sm.sessions[key]
-		if ok {
-			delete(sm.sessions, key)
-		}
-		sm.mu.Unlock()
-
-		if ok {
-			if err := sm.client.DeleteSandbox(ctx, ms.SandboxID); err != nil {
-				slog.Warn("session manager: shutdown delete sandbox failed",
-					"sandbox_id", ms.SandboxID,
-					"error", err,
-				)
-			}
-		}
+		sm.syncAndRemove(ctx, key, "shutdown")
 	}
 
 	slog.Info("session manager: shutdown complete")
+}
+
+// syncAndRemove syncs session files then removes the sandbox from the managed map
+// and deletes it from OpenSandbox. The caller label is used for log messages.
+func (sm *SessionManager) syncAndRemove(ctx context.Context, key, caller string) {
+	if err := sm.SyncSessionFiles(ctx, key); err != nil {
+		slog.Warn("session manager: "+caller+" sync failed",
+			"key", key,
+			"error", err,
+		)
+	}
+
+	sm.mu.Lock()
+	ms, ok := sm.sessions[key]
+	if ok {
+		delete(sm.sessions, key)
+	}
+	sm.mu.Unlock()
+
+	if ok {
+		if err := sm.client.DeleteSandbox(ctx, ms.SandboxID); err != nil {
+			slog.Warn("session manager: "+caller+" delete sandbox failed",
+				"sandbox_id", ms.SandboxID,
+				"error", err,
+			)
+		}
+	}
 }
 
 // Destroy tears down a specific session sandbox. It syncs files first,

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -100,7 +102,9 @@ func (h *SessionsHandler) DownloadFile(c *gin.Context) {
 	}
 	defer rc.Close() //nolint:errcheck
 
-	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	// Sanitize filename to prevent header injection.
+	safeName := strings.NewReplacer("\"", "", "\n", "", "\r", "").Replace(filename)
+	c.Header("Content-Disposition", "attachment; filename=\""+safeName+"\"")
 	c.DataFromReader(http.StatusOK, size, contentType, rc, nil)
 }
 
@@ -177,13 +181,27 @@ func (h *SessionsHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// Delete all session files from MinIO and DB.
-	files, _ := h.store.ListSessionFiles(c.Request.Context(), tenantID, sess.ID)
+	// Delete all session files from MinIO and DB, logging any failures.
+	files, err := h.store.ListSessionFiles(c.Request.Context(), tenantID, sess.ID)
+	if err != nil {
+		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to list session files for deletion: "+err.Error())
+		return
+	}
 	for _, f := range files {
 		if h.artifacts != nil {
-			_ = h.artifacts.DeleteObject(c.Request.Context(), f.S3Key)
+			if delErr := h.artifacts.DeleteObject(c.Request.Context(), f.S3Key); delErr != nil {
+				slog.Warn("session delete: failed to delete object from storage",
+					"s3_key", f.S3Key,
+					"error", delErr,
+				)
+			}
 		}
-		_ = h.store.DeleteFile(c.Request.Context(), f.ID, tenantID)
+		if delErr := h.store.DeleteFile(c.Request.Context(), f.ID, tenantID); delErr != nil {
+			slog.Warn("session delete: failed to delete file record",
+				"file_id", f.ID,
+				"error", delErr,
+			)
+		}
 	}
 
 	// Delete the session record.
