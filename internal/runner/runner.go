@@ -388,11 +388,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 	// executes it.
 	if loadedSkill.Entrypoint == "" {
 		generatedEntry := generateCodeRunnerEntrypoint()
-		uploadFiles = append(uploadFiles, sandbox.FileUpload{
-			Path:    "/sandbox/scripts/main.py",
-			Content: generatedEntry,
-			Mode:    0o755,
-		})
 		if reuploadErr := r.sandbox.UploadFiles(execCtx, execdURL, []sandbox.FileUpload{{
 			Path:    "/sandbox/scripts/main.py",
 			Content: generatedEntry,

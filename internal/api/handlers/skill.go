@@ -274,17 +274,18 @@ func normalizeSkillZip(data []byte) ([]byte, error) {
 
 		fw, err := w.CreateHeader(header)
 		if err != nil {
-			rc.Close() //nolint:errcheck
+			_ = rc.Close()
 			return nil, errors.New("failed to create zip entry " + newName + ": " + err.Error())
 		}
 
 		if !f.FileInfo().IsDir() {
-			if _, err := io.Copy(fw, rc); err != nil {
-				rc.Close() //nolint:errcheck
+			lr := io.LimitReader(rc, 100<<20) // 100 MiB cap per entry
+			if _, err := io.Copy(fw, lr); err != nil { // #nosec G110
+				_ = rc.Close()
 				return nil, errors.New("failed to copy " + f.Name + ": " + err.Error())
 			}
 		}
-		rc.Close() //nolint:errcheck
+		_ = rc.Close()
 	}
 
 	if err := w.Close(); err != nil {
@@ -504,7 +505,7 @@ func GetSkillFiles(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 				continue
 			}
 			data, err := io.ReadAll(frc)
-			frc.Close() //nolint:errcheck
+			_ = frc.Close()
 			if err != nil {
 				continue
 			}

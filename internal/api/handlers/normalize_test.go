@@ -42,7 +42,7 @@ func readZipFiles(t *testing.T, data []byte) map[string]string {
 			t.Fatal(err)
 		}
 		data, err := io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
