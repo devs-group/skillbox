@@ -5,10 +5,7 @@ api_key_required = true
 
 [runtime]
 type = "docker"
-docker_socket = "/var/run/docker.sock"
+execd_image = "opensandbox/execd:latest"
 
-[sandbox]
-default_timeout = 600
-max_timeout = 3600
-default_resources.cpu = "500m"
-default_resources.memory = "256Mi"
+[docker]
+network_mode = "bridge"
