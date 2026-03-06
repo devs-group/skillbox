@@ -286,31 +286,38 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 	}
 
 	// Check Levenshtein distance against popular packages.
+	// Find the closest match (minimum distance) to avoid non-deterministic
+	// results from map iteration order.
+	bestDist := 3 // Only care about distance 1 or 2.
+	bestPopular := ""
+
 	for popular := range popularPackages {
 		dist := levenshtein(pkg, popular)
 		if dist == 0 {
-			continue // Exact match — not a typosquat.
+			return nil // Exact match — not a typosquat.
 		}
-		if dist == 1 {
-			findings = append(findings, Finding{
-				Stage:       stageNameDeps,
-				Severity:    SeverityBlock,
-				Category:    "typosquat_package",
-				FilePath:    filePath,
-				Description: fmt.Sprintf("possible typosquat of %q (distance 1): %s", popular, pkg),
-			})
-			return findings // One match is enough.
+		if dist < bestDist {
+			bestDist = dist
+			bestPopular = popular
 		}
-		if dist == 2 {
-			findings = append(findings, Finding{
-				Stage:       stageNameDeps,
-				Severity:    SeverityFlag,
-				Category:    "typosquat_package",
-				FilePath:    filePath,
-				Description: fmt.Sprintf("possible typosquat of %q (distance 2): %s", popular, pkg),
-			})
-			return findings // One match is enough.
-		}
+	}
+
+	if bestDist == 1 {
+		findings = append(findings, Finding{
+			Stage:       stageNameDeps,
+			Severity:    SeverityBlock,
+			Category:    "typosquat_package",
+			FilePath:    filePath,
+			Description: fmt.Sprintf("possible typosquat of %q (distance 1): %s", bestPopular, pkg),
+		})
+	} else if bestDist == 2 {
+		findings = append(findings, Finding{
+			Stage:       stageNameDeps,
+			Severity:    SeverityFlag,
+			Category:    "typosquat_package",
+			FilePath:    filePath,
+			Description: fmt.Sprintf("possible typosquat of %q (distance 2): %s", bestPopular, pkg),
+		})
 	}
 
 	return findings

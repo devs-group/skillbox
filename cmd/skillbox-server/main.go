@@ -80,8 +80,17 @@ func main() {
 	// Initialize security scanner
 	var sc scanner.Scanner
 	if cfg.ScannerEnabled {
-		sc = scanner.New(cfg.ScannerTimeout, slog.Default())
-		slog.Info("security scanner enabled", "timeout", cfg.ScannerTimeout)
+		var llmCfg *scanner.LLMConfig
+		if cfg.ScannerLLMEnabled {
+			llmCfg = &scanner.LLMConfig{
+				APIKey:        cfg.ScannerLLMAPIKey,
+				Model:         cfg.ScannerLLMModel,
+				Timeout:       cfg.ScannerLLMTimeout,
+				MaxConcurrent: cfg.ScannerLLMMaxConcurrent,
+			}
+		}
+		sc = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg)
+		slog.Info("security scanner enabled", "timeout", cfg.ScannerTimeout, "llm_enabled", cfg.ScannerLLMEnabled)
 	} else {
 		sc = &scanner.NoopScanner{}
 		slog.Warn("security scanner is DISABLED — uploads are not scanned")

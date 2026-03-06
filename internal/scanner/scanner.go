@@ -32,13 +32,15 @@ type stage interface {
 type Pipeline struct {
 	tier1   []stage
 	tier2   []stage
+	tier3   []stage // LLM deep analysis (optional, empty when disabled)
 	timeout time.Duration
 	logger  *slog.Logger
 }
 
 // New creates a new scanner Pipeline configured for Tier 1 and Tier 2 scanning.
-func New(timeout time.Duration, logger *slog.Logger) *Pipeline {
-	return &Pipeline{
+// If llmCfg is non-nil, Tier 3 LLM analysis is enabled.
+func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig) *Pipeline {
+	p := &Pipeline{
 		tier1: []stage{
 			newPatternStage(logger),
 		},
@@ -49,6 +51,13 @@ func New(timeout time.Duration, logger *slog.Logger) *Pipeline {
 		timeout: timeout,
 		logger:  logger,
 	}
+
+	if llmCfg != nil {
+		p.tier3 = []stage{newLLMStage(*llmCfg, logger)}
+		logger.Info("scanner LLM analysis enabled", "model", llmCfg.Model)
+	}
+
+	return p
 }
 
 // Scan runs the tiered scanning pipeline.
@@ -60,8 +69,14 @@ func New(timeout time.Duration, logger *slog.Logger) *Pipeline {
 //
 // Tier 2 (Deep Scan): Typosquatting, prompt injection, Unicode analysis.
 //   - BLOCK findings → reject.
-//   - Unresolved flags → fail closed (Tier 3 LLM not yet available).
+//   - Unresolved flags → escalate to Tier 3 (if enabled).
 //   - All resolved → accept.
+//
+// Tier 3 (LLM Analysis): Contextual judgment by Claude.
+//   - Only runs when Tier 2 leaves unresolved FLAG findings and LLM is enabled.
+//   - BLOCK findings → reject.
+//   - LLM unavailable → fail closed (return error).
+//   - LLM says benign → accept.
 func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*ScanResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
@@ -111,8 +126,28 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 		return result, nil
 	}
 
-	// Tier 2 passed — accept with all flags recorded.
-	// In Phase 3, unresolved flags would escalate to Tier 3 (LLM).
+	// Collect all unresolved flags from Tier 1 + Tier 2.
+	allFlags := collectFlags(result.Findings)
+
+	// --- Tier 3: LLM Analysis (optional) ---
+	if len(allFlags) > 0 && len(p.tier3) > 0 {
+		result.Tier = 3
+		t3Findings, err := p.runStages(ctx, p.tier3, zr, allFlags)
+		if err != nil {
+			// LLM unavailable → fail closed.
+			return nil, fmt.Errorf("tier 3: %w", err)
+		}
+		result.Findings = append(result.Findings, t3Findings...)
+
+		if hasBlock(t3Findings) {
+			result.Pass = false
+			result.Duration = time.Since(start)
+			p.logResult(result, s)
+			return result, nil
+		}
+	}
+
+	// Accept with all flags recorded.
 	result.Duration = time.Since(start)
 	p.logResult(result, s)
 	return result, nil

@@ -445,13 +445,13 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 > **Semaphore (Simplicity Reviewer):** Use a simple `make(chan struct{}, maxConcurrent)` semaphore. No need for a configurable semaphore — hardcode the default (5) and make it a config var only if needed later.
 
 **Success criteria:**
-- Flagged patterns (e.g., `subprocess.Popen` used for legitimate git commands) are correctly classified as non-malicious by LLM
-- Obfuscated malicious code that passes static checks is caught by LLM analysis
-- LLM prompt uses canary tokens, random delimiters, temperature 0
-- Scanned content is in `user` message only, never `system`
-- LLM timeout/failure returns `(nil, error)` — caller rejects with 500
-- Concurrent uploads respect the semaphore (max 5 LLM calls)
-- API key validated at startup, not first scan
+- [x] Flagged patterns (e.g., `subprocess.Popen` used for legitimate git commands) are correctly classified as non-malicious by LLM
+- [x] Obfuscated malicious code that passes static checks is caught by LLM analysis
+- [x] LLM prompt uses canary tokens, random delimiters, temperature 0
+- [x] Scanned content is in `user` message only, never `system`
+- [x] LLM timeout/failure returns `(nil, error)` — caller rejects with 500
+- [x] Concurrent uploads respect the semaphore (max 5 LLM calls)
+- [x] API key validated at startup, not first scan
 
 #### Phase 4: Pluggable External Scanners
 
