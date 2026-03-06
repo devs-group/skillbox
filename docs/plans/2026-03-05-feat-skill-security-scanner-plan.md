@@ -494,12 +494,14 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 > **ClamAV chunk size (Performance Oracle):** Send ZIP content to clamd in 64KB chunks via `INSTREAM`. Default chunk size in go-clamd may be too small, causing excessive syscalls.
 
 **Success criteria:**
-- ClamAV detects EICAR test file and known malware samples
-- YARA rules match crafted test payloads
-- Unconfigured external scanner adds zero latency (nil check, not a no-op call)
-- ClamAV/YARA unavailability returns `(nil, error)` — caller rejects with 500
-- `POST /v1/skills/validate` performs dry-run scan without storing the skill
-- ClamAV runs in Tier 2, before LLM (Tier 3)
+- [x] ClamAV detects EICAR test file and known malware samples
+- [x] YARA rules match crafted test payloads
+- [x] Unconfigured external scanner adds zero latency (nil check, not a no-op call)
+- [x] ClamAV/YARA unavailability returns `(nil, error)` — caller rejects with 500
+- [x] `POST /v1/skills/validate` performs dry-run scan without storing the skill
+- [x] ClamAV runs in Tier 2, before LLM (Tier 3)
+- [x] Scanner metrics tracking (total/passed/blocked/failed, per-tier, per-category, timing)
+- [x] `GET /v1/admin/scanner/stats` endpoint for monitoring
 
 ## Future Ideas
 

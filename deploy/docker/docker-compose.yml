@@ -17,6 +17,9 @@ services:
       SKILLBOX_OPENSANDBOX_API_KEY: "${OPENSANDBOX_API_KEY:-skillbox-dev-key}"
       SKILLBOX_LOG_LEVEL: "debug"
       SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
+      # External scanner (uncomment to enable ClamAV):
+      # SKILLBOX_SCANNER_EXTERNAL_TYPE: "clamav"
+      # SKILLBOX_SCANNER_CLAMAV_ADDRESS: "tcp://clamav:3310"
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +90,24 @@ services:
       echo 'Buckets created successfully';
       "
 
+  # --- ClamAV (optional — uncomment to enable malware scanning) ---
+  # To enable: set SKILLBOX_SCANNER_EXTERNAL_TYPE=clamav in the api service.
+  # clamav:
+  #   image: clamav/clamav:1.4
+  #   ports:
+  #     - "3310:3310"
+  #   volumes:
+  #     - clamav-db:/var/lib/clamav
+  #   networks:
+  #     - backend
+  #   healthcheck:
+  #     test: ["CMD", "clamdcheck"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 120s  # ClamAV takes ~60-90s to load signature DB
+  #   restart: unless-stopped
+
   # --- OpenSandbox ---
   opensandbox:
     image: opensandbox/server:latest
@@ -112,6 +133,7 @@ services:
 volumes:
   pgdata:
   miniodata:
+  # clamav-db:  # Uncomment when enabling ClamAV
 
 networks:
   backend:

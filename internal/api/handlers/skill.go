@@ -359,6 +359,146 @@ func normalizeSkillZip(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ValidateSkill handles POST /v1/skills/validate.
+//
+// It performs the same security scanning as UploadSkill but does NOT store
+// the skill. This allows agents to pre-flight check skills before uploading.
+// Returns 200 with scan summary on pass, 422 on rejection.
+func ValidateSkill(cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var zipData []byte
+		var err error
+
+		contentType := c.ContentType()
+		switch {
+		case strings.HasPrefix(contentType, "application/zip"),
+			strings.HasPrefix(contentType, "application/octet-stream"):
+			limited := io.LimitReader(c.Request.Body, cfg.MaxSkillSize+1)
+			zipData, err = io.ReadAll(limited)
+			if err != nil {
+				response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read request body: "+err.Error())
+				return
+			}
+			if int64(len(zipData)) > cfg.MaxSkillSize {
+				response.RespondError(c, http.StatusRequestEntityTooLarge, "too_large",
+					"skill zip exceeds maximum allowed size")
+				return
+			}
+
+		case strings.HasPrefix(contentType, "multipart/form-data"):
+			file, _, ferr := c.Request.FormFile("file")
+			if ferr != nil {
+				response.RespondError(c, http.StatusBadRequest, "bad_request", "missing 'file' field in multipart form")
+				return
+			}
+			defer file.Close() //nolint:errcheck
+
+			limited := io.LimitReader(file, cfg.MaxSkillSize+1)
+			zipData, err = io.ReadAll(limited)
+			if err != nil {
+				response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read uploaded file: "+err.Error())
+				return
+			}
+			if int64(len(zipData)) > cfg.MaxSkillSize {
+				response.RespondError(c, http.StatusRequestEntityTooLarge, "too_large",
+					"skill zip exceeds maximum allowed size")
+				return
+			}
+
+		default:
+			response.RespondError(c, http.StatusUnsupportedMediaType, "unsupported_media_type",
+				"expected Content-Type application/zip or multipart/form-data")
+			return
+		}
+
+		if len(zipData) == 0 {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "empty zip data")
+			return
+		}
+
+		// Normalize the zip.
+		zipData, err = normalizeSkillZip(zipData)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		// Validate zip structure.
+		parsedSkill, err := validateSkillZip(zipData)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		if err := parsedSkill.Validate(); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		// ZIP bomb check.
+		zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", "failed to read zip for scanning: "+err.Error())
+			return
+		}
+
+		if err := scanner.CheckZIPSafety(zr); err != nil {
+			scanID := uuid.NewString()
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"validation rejected by security scan",
+				map[string]any{"scan_id": scanID, "categories": []string{"zip_bomb"}},
+			)
+			return
+		}
+
+		// Run scanner pipeline.
+		scanResult, err := sc.Scan(c.Request.Context(), zr, parsedSkill)
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "security scan unavailable")
+			return
+		}
+
+		if !scanResult.Pass {
+			scanID := uuid.NewString()
+			categories := make([]string, 0)
+			seen := make(map[string]bool)
+			for _, f := range scanResult.Findings {
+				if !seen[f.Category] {
+					categories = append(categories, f.Category)
+					seen[f.Category] = true
+				}
+			}
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"validation rejected by security scan",
+				map[string]any{"scan_id": scanID, "categories": categories},
+			)
+			return
+		}
+
+		// Passed — return scan summary (no storage).
+		c.JSON(http.StatusOK, gin.H{
+			"valid":        true,
+			"skill_name":   parsedSkill.Name,
+			"skill_version": parsedSkill.Version,
+			"scan_tier":    scanResult.Tier,
+			"duration_ms":  scanResult.Duration.Milliseconds(),
+		})
+	}
+}
+
+// ScannerStats handles GET /v1/admin/scanner/stats.
+// Returns current scanner metrics for monitoring dashboards.
+func ScannerStats(p *scanner.Pipeline) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil {
+			c.JSON(http.StatusOK, gin.H{"enabled": false})
+			return
+		}
+		snapshot := p.Metrics().Snapshot()
+		c.JSON(http.StatusOK, snapshot)
+	}
+}
+
 // ListSkills handles GET /v1/skills.
 // It returns all skill metadata for the authenticated tenant, including
 // descriptions so agents can decide which skill to use.

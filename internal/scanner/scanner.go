@@ -35,11 +35,13 @@ type Pipeline struct {
 	tier3   []stage // LLM deep analysis (optional, empty when disabled)
 	timeout time.Duration
 	logger  *slog.Logger
+	metrics *Metrics
 }
 
 // New creates a new scanner Pipeline configured for Tier 1 and Tier 2 scanning.
 // If llmCfg is non-nil, Tier 3 LLM analysis is enabled.
-func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig) *Pipeline {
+// If ext is non-nil, the external scanner runs as part of Tier 2.
+func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, ext ExternalScanner) *Pipeline {
 	p := &Pipeline{
 		tier1: []stage{
 			newPatternStage(logger),
@@ -50,6 +52,13 @@ func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig) *Pipelin
 		},
 		timeout: timeout,
 		logger:  logger,
+		metrics: NewMetrics(),
+	}
+
+	// External scanner (ClamAV/YARA) runs in Tier 2 — fast, catches binary malware.
+	if ext != nil {
+		p.tier2 = append(p.tier2, newExternalStage(ext, logger))
+		logger.Info("external scanner enabled", "engine", ext.Name())
 	}
 
 	if llmCfg != nil {
@@ -58,6 +67,11 @@ func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig) *Pipelin
 	}
 
 	return p
+}
+
+// Metrics returns the scanner's metrics tracker.
+func (p *Pipeline) Metrics() *Metrics {
+	return p.metrics
 }
 
 // Scan runs the tiered scanning pipeline.
@@ -84,9 +98,19 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 	result := &ScanResult{Pass: true, Tier: 1}
 	start := time.Now()
 
+	// Record metrics on completion (deferred to capture all exit paths).
+	recordMetrics := true
+	defer func() {
+		if recordMetrics && result != nil {
+			p.metrics.RecordScan(result)
+		}
+	}()
+
 	// --- Tier 1: Quick Scan ---
 	t1Findings, err := p.runStages(ctx, p.tier1, zr, nil)
 	if err != nil {
+		recordMetrics = false
+		p.metrics.RecordFailure()
 		return nil, fmt.Errorf("tier 1: %w", err)
 	}
 	result.Findings = append(result.Findings, t1Findings...)
@@ -114,6 +138,8 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 	result.Tier = 2
 	t2Findings, err := p.runStages(ctx, p.tier2, zr, t1Flags)
 	if err != nil {
+		recordMetrics = false
+		p.metrics.RecordFailure()
 		return nil, fmt.Errorf("tier 2: %w", err)
 	}
 	result.Findings = append(result.Findings, t2Findings...)
@@ -135,6 +161,8 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 		t3Findings, err := p.runStages(ctx, p.tier3, zr, allFlags)
 		if err != nil {
 			// LLM unavailable → fail closed.
+			recordMetrics = false
+			p.metrics.RecordFailure()
 			return nil, fmt.Errorf("tier 3: %w", err)
 		}
 		result.Findings = append(result.Findings, t3Findings...)

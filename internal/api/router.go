@@ -23,7 +23,7 @@ import (
 // The router uses gin.New() (no default middleware) and explicitly adds
 // Recovery and structured RequestLogger middleware so the log output is
 // fully controlled.
-func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, sc scanner.Scanner, sm *sandbox.SessionManager, col ...*artifacts.Collector) *gin.Engine {
+func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, sc scanner.Scanner, sm *sandbox.SessionManager, pipeline *scanner.Pipeline, col ...*artifacts.Collector) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(middleware.RequestLogger())
@@ -44,10 +44,14 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 
 		// Skill management endpoints
 		v1.POST("/skills", handlers.UploadSkill(reg, s, cfg, sc))
+		v1.POST("/skills/validate", handlers.ValidateSkill(cfg, sc))
 		v1.GET("/skills", handlers.ListSkills(s, reg))
 		v1.GET("/skills/:name/:version", handlers.GetSkill(reg, s))
 		v1.GET("/skills/:name/:version/files", handlers.GetSkillFiles(reg, s))
 		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
+
+		// Scanner admin endpoints
+		v1.GET("/admin/scanner/stats", handlers.ScannerStats(pipeline))
 
 		// File/artifact endpoints
 		if len(col) > 0 && col[0] != nil {

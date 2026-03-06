@@ -77,19 +77,24 @@ type Scanner interface {
 
 ```
 internal/scanner/
-├── scanner.go           # Pipeline struct, Scan() method, tier orchestration
-├── result.go            # Finding, ScanResult, Severity types
-├── errors.go            # ErrBlocked, ErrScanFailed sentinel errors
-├── zipcheck.go          # CheckZIPSafety — zip bomb protection
-├── stage_patterns.go    # Tier 1: static regex patterns + dep blocklist
-├── corpus.go            # ~200 popular PyPI/npm package names for typosquat detection
-├── stage_deps.go        # Tier 2: typosquatting, homoglyphs, install hooks
-├── stage_deps_test.go   # Tier 2 deps tests (12 cases)
-├── stage_prompt.go      # Tier 2: prompt injection, delimiter injection, invisible Unicode
-├── stage_prompt_test.go # Tier 2 prompt tests (17 cases)
-├── stage_llm.go         # Tier 3: LLM deep analysis via Claude API
-├── stage_llm_test.go    # Tier 3 LLM tests (13 cases, mock HTTP server)
-└── scanner_test.go      # Integration tests + ZIP safety tests
+├── scanner.go               # Pipeline struct, Scan() method, tier orchestration
+├── result.go                # Finding, ScanResult, Severity types
+├── errors.go                # ErrBlocked, ErrScanFailed sentinel errors
+├── metrics.go               # Atomic scan counters (pass/block/fail, per-tier, per-category)
+├── zipcheck.go              # CheckZIPSafety — zip bomb protection
+├── stage_patterns.go        # Tier 1: static regex patterns + dep blocklist
+├── corpus.go                # ~200 popular PyPI/npm package names for typosquat detection
+├── stage_deps.go            # Tier 2: typosquatting, homoglyphs, install hooks
+├── stage_deps_test.go       # Tier 2 deps tests (12 cases)
+├── stage_prompt.go          # Tier 2: prompt injection, delimiter injection, invisible Unicode
+├── stage_prompt_test.go     # Tier 2 prompt tests (17 cases)
+├── stage_external.go        # Tier 2: pluggable external scanner interface + stage wrapper
+├── clamav.go                # ClamAV clamd client (native INSTREAM protocol)
+├── yara.go                  # YARA scanner (shells out to yara binary)
+├── stage_external_test.go   # External scanner tests (ClamAV, YARA, metrics — 20 cases)
+├── stage_llm.go             # Tier 3: LLM deep analysis via Claude API
+├── stage_llm_test.go        # Tier 3 LLM tests (13 cases, mock HTTP server)
+└── scanner_test.go          # Integration tests + ZIP safety tests
 ```
 
 ## Findings Model
@@ -280,6 +285,9 @@ All config is via environment variables, following 12-factor methodology.
 | `SKILLBOX_SCANNER_LLM_MODEL` | string | `claude-haiku-4-5-20251001` | 3 | Claude model for analysis |
 | `SKILLBOX_SCANNER_LLM_TIMEOUT` | duration | `10s` | 3 | Per-LLM-call timeout |
 | `SKILLBOX_SCANNER_LLM_MAX_CONCURRENT` | int | `5` | 3 | Max concurrent LLM API calls |
+| `SKILLBOX_SCANNER_EXTERNAL_TYPE` | string | `none` | 4 | External scanner: `none`, `clamav`, `yara` |
+| `SKILLBOX_SCANNER_CLAMAV_ADDRESS` | string | `tcp://127.0.0.1:3310` | 4 | ClamAV clamd address (TCP or Unix socket) |
+| `SKILLBOX_SCANNER_YARA_RULES_DIR` | string | — | 4 | Directory containing `.yar`/`.yara` rule files |
 
 **Startup validation:**
 - `SKILLBOX_SCANNER_ENABLED=false` emits `slog.Warn` at startup
@@ -302,6 +310,83 @@ When a skill is blocked, the upload handler returns HTTP 422 with a structured b
 
 Infrastructure failures (scanner unavailable) return HTTP 500.
 
+## Pluggable External Scanners
+
+External scanners (ClamAV, YARA) run in Tier 2 alongside dependency and prompt analysis. When unconfigured (`SKILLBOX_SCANNER_EXTERNAL_TYPE=none`, the default), the external stage is not added to the pipeline — zero overhead via nil check, not a no-op struct.
+
+### ClamAV (`clamav.go`)
+
+Native implementation of the ClamAV `clamd` INSTREAM protocol — no external Go dependency needed.
+
+**Protocol:** Connect via TCP or Unix socket → send `zINSTREAM\0` → send data in 64KB chunks (4-byte big-endian length + data) → send 4 zero bytes → read verdict.
+
+**Responses:**
+- `stream: OK` — clean file
+- `stream: <virus> FOUND` — malware detected → BLOCK
+- `stream: <msg> ERROR` — scan error → fail closed
+
+**Address formats:**
+- `tcp://127.0.0.1:3310` — TCP connection
+- `unix:/run/clamav/clamd.ctl` — Unix socket
+
+### YARA (`yara.go`)
+
+Shells out to the system `yara` binary — no CGO, no Go YARA bindings needed.
+
+Loads all `.yar`/`.yara` files from the configured rules directory at startup. For each file in the ZIP, writes to a temp file and runs `yara --no-warnings <rule> <file>`. Any match → BLOCK.
+
+**Startup validation:**
+- Rules directory must exist and contain at least one `.yar`/`.yara` file
+- `yara` binary must be in `$PATH`
+
+### ExternalScanner Interface
+
+```go
+type ExternalScanner interface {
+    ScanFile(ctx context.Context, filePath string, data []byte) ([]Finding, error)
+    Name() string
+}
+```
+
+## Dry-Run Validation Endpoint
+
+`POST /v1/skills/validate` runs the full scanner pipeline without storing the skill. Same auth as upload. Useful for agents to pre-flight check skills.
+
+- **200 OK** — scan passed, returns `{ "valid": true, "skill_name": "...", "scan_tier": 2, "duration_ms": 45 }`
+- **422 Unprocessable Entity** — scan failed, same body as upload rejection
+
+## Scanner Metrics
+
+The pipeline tracks atomic counters for monitoring:
+
+```
+GET /v1/admin/scanner/stats
+```
+
+Response:
+```json
+{
+  "total_scans": 1542,
+  "passed_scans": 1489,
+  "blocked_scans": 48,
+  "failed_scans": 5,
+  "tier1_scans": 1400,
+  "tier2_scans": 137,
+  "tier3_scans": 5,
+  "avg_duration_ms": 12.5,
+  "max_duration_ms": 8450.0,
+  "block_categories": {
+    "reverse_shell": 12,
+    "typosquat_package": 8,
+    "piped_execution": 6,
+    "malware_detected": 3,
+    "prompt_injection": 19
+  }
+}
+```
+
+Categories track only BLOCK findings (not FLAGS). Duplicate categories in a single scan are counted once.
+
 ## Wiring into the Server
 
 In `cmd/skillbox-server/main.go`:
@@ -318,13 +403,24 @@ if cfg.ScannerEnabled {
             MaxConcurrent: cfg.ScannerLLMMaxConcurrent,
         }
     }
-    sc = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg)
+    // Configure external scanner (ClamAV/YARA).
+    var ext scanner.ExternalScanner
+    switch cfg.ScannerExternalType {
+    case "clamav":
+        ext, _ = scanner.NewClamAVScanner(cfg.ScannerClamAVAddress)
+    case "yara":
+        ext, _ = scanner.NewYARAScanner(cfg.ScannerYARARulesDir)
+    }
+
+    pipeline = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, ext)
+    sc = pipeline
 } else {
     sc = &scanner.NoopScanner{}
 }
 ```
 
 The `NoopScanner` is used when scanning is disabled, for tests, and as a fallback.
+The `pipeline` variable (non-nil when scanner is enabled) is passed to the router for the metrics endpoint.
 
 ## Testing
 
@@ -364,8 +460,9 @@ go test ./internal/scanner/ -v
 - **stage_deps_test.go**: 12 tests (typosquatting at various distances, homoglyphs, install hooks, pyproject.toml, clean deps)
 - **stage_prompt_test.go**: 17 tests (all injection categories, score halving, invisible Unicode)
 - **stage_llm_test.go**: 13 tests (benign/threat detection, canary validation, API errors, rate limiting, timeouts, semaphore, markdown-wrapped JSON)
+- **stage_external_test.go**: 20 tests (mock external scanner, ClamAV INSTREAM protocol with mock clamd server, EICAR detection, fail-closed, address parsing, YARA binary/dir validation, metrics tracking, pipeline integration)
 
-LLM tests use `httptest.Server` to mock the Anthropic Messages API — no real API calls are made.
+LLM tests use `httptest.Server` to mock the Anthropic Messages API. ClamAV tests use a mock TCP server that speaks the INSTREAM protocol. No real API calls or daemon connections are made.
 
 ## Rollback
 
@@ -373,6 +470,7 @@ Instant rollback with no migration:
 
 - **Disable all scanning:** `SKILLBOX_SCANNER_ENABLED=false` and restart
 - **Disable LLM only:** `SKILLBOX_SCANNER_LLM_ENABLED=false` and restart (Tier 1+2 continue running)
+- **Disable external scanner:** `SKILLBOX_SCANNER_EXTERNAL_TYPE=none` and restart (Tier 1+2 without ClamAV/YARA)
 
 ## Future Ideas
 
