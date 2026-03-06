@@ -15,6 +15,7 @@ import (
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
 	"github.com/devs-group/skillbox/internal/sandbox"
+	"github.com/devs-group/skillbox/internal/scanner"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -76,11 +77,21 @@ func main() {
 	// Initialize session manager for sandbox shell API
 	sessMgr := sandbox.NewSessionManager(sbClient, db, collector, cfg)
 
+	// Initialize security scanner
+	var sc scanner.Scanner
+	if cfg.ScannerEnabled {
+		sc = scanner.New(cfg.ScannerTimeout, slog.Default())
+		slog.Info("security scanner enabled", "timeout", cfg.ScannerTimeout)
+	} else {
+		sc = &scanner.NoopScanner{}
+		slog.Warn("security scanner is DISABLED — uploads are not scanned")
+	}
+
 	// Initialize runner
 	r := runner.New(cfg, sbClient, reg, db, collector)
 
 	// Build router
-	router := api.NewRouter(cfg, db, r, reg, sessMgr, collector)
+	router := api.NewRouter(cfg, db, r, reg, sc, sessMgr, collector)
 
 	// Create HTTP server
 	srv := &http.Server{

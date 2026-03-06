@@ -5,15 +5,18 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/devs-group/skillbox/internal/api/middleware"
 	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
+	"github.com/devs-group/skillbox/internal/scanner"
 	"github.com/devs-group/skillbox/internal/skill"
 	"github.com/devs-group/skillbox/internal/store"
 )
@@ -28,7 +31,7 @@ import (
 // then uploaded to the registry. Skill metadata is also persisted in
 // PostgreSQL so that list operations can return descriptions without
 // downloading every zip archive. Returns 201 with skill metadata on success.
-func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin.HandlerFunc {
+func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
@@ -100,6 +103,67 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin
 
 		if err := parsedSkill.Validate(); err != nil {
 			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		// Security scan: ZIP bomb check + tiered scanning.
+		zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", "failed to read zip for scanning: "+err.Error())
+			return
+		}
+
+		if err := scanner.CheckZIPSafety(zr); err != nil {
+			scanID := uuid.NewString()
+			slog.Warn("security scan: zip safety check failed",
+				"scan_id", scanID,
+				"skill_name", parsedSkill.Name,
+				"skill_version", parsedSkill.Version,
+				"tenant_id", tenantID,
+				"error", err,
+			)
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"upload rejected by security scan",
+				map[string]any{"scan_id": scanID, "categories": []string{"zip_bomb"}},
+			)
+			return
+		}
+
+		scanResult, err := sc.Scan(c.Request.Context(), zr, parsedSkill)
+		if err != nil {
+			// Infrastructure failure — fail closed.
+			slog.Error("security scan infrastructure failure",
+				"skill_name", parsedSkill.Name,
+				"tenant_id", tenantID,
+				"error", err,
+			)
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "security scan unavailable")
+			return
+		}
+
+		if !scanResult.Pass {
+			scanID := uuid.NewString()
+			categories := make([]string, 0)
+			seen := make(map[string]bool)
+			for _, f := range scanResult.Findings {
+				if !seen[f.Category] {
+					categories = append(categories, f.Category)
+					seen[f.Category] = true
+				}
+			}
+			slog.Warn("security scan blocked upload",
+				"scan_id", scanID,
+				"skill_name", parsedSkill.Name,
+				"skill_version", parsedSkill.Version,
+				"tenant_id", tenantID,
+				"categories", categories,
+				"tier", scanResult.Tier,
+				"duration_ms", scanResult.Duration.Milliseconds(),
+			)
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"upload rejected by security scan",
+				map[string]any{"scan_id": scanID, "categories": categories},
+			)
 			return
 		}
 

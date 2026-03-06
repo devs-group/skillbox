@@ -47,6 +47,10 @@ type Config struct {
 	SandboxSessionImage string        // default image for session sandboxes
 	MaxSessionSandboxes int           // max concurrent session sandboxes per server
 
+	// Security scanner
+	ScannerEnabled bool
+	ScannerTimeout time.Duration
+
 	// Server
 	APIPort           string
 
@@ -224,6 +228,18 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SKILLBOX_MAX_SESSION_SANDBOXES must be positive, got %d", maxSessions)
 	}
 	cfg.MaxSessionSandboxes = maxSessions
+
+	// Security scanner
+	scannerEnabled, err := parseBool(envOrDefault("SKILLBOX_SCANNER_ENABLED", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_ENABLED: %w", err)
+	}
+	cfg.ScannerEnabled = scannerEnabled
+
+	cfg.ScannerTimeout, err = time.ParseDuration(envOrDefault("SKILLBOX_SCANNER_TIMEOUT", "30s"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_TIMEOUT: %w", err)
+	}
 
 	return cfg, nil
 }
