@@ -501,6 +501,10 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 - `POST /v1/skills/validate` performs dry-run scan without storing the skill
 - ClamAV runs in Tier 2, before LLM (Tier 3)
 
+## Future Ideas
+
+- **Quarantine bucket**: Upload rejected skills to a separate MinIO bucket (`quarantine`) with metadata (scan_id, categories, tenant_id, timestamp) for forensic analysis, pattern improvement, and false positive recovery. Needs retention policy and strict access controls.
+
 ## Key Design Decisions
 
 | Decision | Choice | Rationale |
@@ -533,15 +537,15 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 - [x] Reverse shell patterns (`nc -e`, `/dev/tcp/`, `mkfifo`, `bash -i >& /dev/tcp/`) are blocked
 - [x] Piped execution patterns (`curl | bash`, `wget | sh`, `base64 -d | bash`) are blocked
 - [x] Known-malicious packages from OSSF blocklist are blocked (Tier 1 exact-match)
-- [ ] Typosquatted package names are detected (block at distance ≤ 1, flag at ≤ 2) (Tier 2)
-- [ ] Homoglyph package names (mixed Latin/Cyrillic) are blocked (Tier 2)
-- [ ] `preinstall`/`postinstall` npm hooks are blocked
-- [ ] Prompt injection patterns (override instructions, role hijacking) are detected in SKILL.md
-- [ ] Tool-call injection patterns (`<tool_use>`, `<function_call>`) are detected in SKILL.md
-- [ ] Delimiter injection patterns (`</system>`, `Human:`, `Assistant:`) are detected
-- [ ] Invisible Unicode characters are flagged in SKILL.md and code files
-- [ ] Unicode NFC normalization is applied before all pattern matching
-- [ ] MCP server references in SKILL.md are flagged
+- [x] Typosquatted package names are detected (block at distance ≤ 1, flag at ≤ 2) (Tier 2)
+- [x] Homoglyph package names (mixed Latin/Cyrillic) are blocked (Tier 2)
+- [x] `preinstall`/`postinstall` npm hooks are blocked
+- [x] Prompt injection patterns (override instructions, role hijacking) are detected in SKILL.md
+- [x] Tool-call injection patterns (`<tool_use>`, `<function_call>`) are detected in SKILL.md
+- [x] Delimiter injection patterns (`</system>`, `Human:`, `Assistant:`) are detected
+- [x] Invisible Unicode characters are flagged in SKILL.md and code files
+- [x] Unicode NFC normalization is applied before all pattern matching
+- [x] MCP server references in SKILL.md are flagged
 - [x] Ambiguous patterns (`subprocess`, `eval`) are flagged, not blocked, and escalated to Tier 3
 - [ ] LLM analysis distinguishes legitimate use of flagged APIs from malicious use
 - [ ] LLM unavailability returns `(nil, error)` — caller rejects with 500 (fail closed)
@@ -559,7 +563,7 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 ### Non-Functional Requirements
 
 - [x] Tier 1 (quick scan) completes in <100ms for typical skills
-- [ ] Tier 2 (deep scan) completes in <500ms for typical skills (<5MB)
+- [x] Tier 2 (deep scan) completes in <500ms for typical skills (<5MB)
 - [ ] Tier 3 (LLM) completes in <10s when triggered
 - [x] Total scan pipeline respects the configured timeout (default 30s)
 - [x] Concurrent uploads are safe (no shared mutable state in scanner)

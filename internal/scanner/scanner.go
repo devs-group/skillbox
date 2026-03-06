@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/devs-group/skillbox/internal/skill"
@@ -30,16 +31,20 @@ type stage interface {
 // Pipeline implements Scanner by running tiered scan stages.
 type Pipeline struct {
 	tier1   []stage
+	tier2   []stage
 	timeout time.Duration
 	logger  *slog.Logger
 }
 
-// New creates a new scanner Pipeline configured for Tier 1 scanning.
-// Tier 2 and Tier 3 stages are added in later phases.
+// New creates a new scanner Pipeline configured for Tier 1 and Tier 2 scanning.
 func New(timeout time.Duration, logger *slog.Logger) *Pipeline {
 	return &Pipeline{
 		tier1: []stage{
 			newPatternStage(logger),
+		},
+		tier2: []stage{
+			newDepsStage(logger),
+			newPromptStage(logger),
 		},
 		timeout: timeout,
 		logger:  logger,
@@ -49,9 +54,14 @@ func New(timeout time.Duration, logger *slog.Logger) *Pipeline {
 // Scan runs the tiered scanning pipeline.
 //
 // Tier 1 (Quick Scan): Runs static patterns + dep blocklist.
-// If no findings at all, accepts immediately.
-// If BLOCK findings, rejects immediately.
-// If only FLAG findings, the result contains the flags (Tier 2/3 will handle in later phases).
+//   - No findings → accept immediately (most uploads stop here).
+//   - BLOCK findings → reject immediately.
+//   - FLAG findings → escalate to Tier 2.
+//
+// Tier 2 (Deep Scan): Typosquatting, prompt injection, Unicode analysis.
+//   - BLOCK findings → reject.
+//   - Unresolved flags → fail closed (Tier 3 LLM not yet available).
+//   - All resolved → accept.
 func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*ScanResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
@@ -60,23 +70,49 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 	start := time.Now()
 
 	// --- Tier 1: Quick Scan ---
-	findings, err := p.runStages(ctx, p.tier1, zr, nil)
+	t1Findings, err := p.runStages(ctx, p.tier1, zr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("tier 1: %w", err)
 	}
-	result.Findings = append(result.Findings, findings...)
+	result.Findings = append(result.Findings, t1Findings...)
 
 	// Any BLOCK → reject immediately.
-	if hasBlock(findings) {
+	if hasBlock(t1Findings) {
 		result.Pass = false
 		result.Duration = time.Since(start)
 		p.logResult(result, s)
 		return result, nil
 	}
 
-	// FLAG findings without LLM → for now, pass with flags recorded.
-	// In Phase 2+, this is where Tier 2 and Tier 3 escalation will happen.
-	// For Phase 1: flags are logged but do not block (LLM not yet available).
+	// Determine if Tier 2 is needed.
+	t1Flags := collectFlags(t1Findings)
+	needsTier2 := len(t1Flags) > 0 || hasDependencyFiles(zr)
+
+	if !needsTier2 {
+		// Clean upload — accept at Tier 1.
+		result.Duration = time.Since(start)
+		p.logResult(result, s)
+		return result, nil
+	}
+
+	// --- Tier 2: Deep Scan ---
+	result.Tier = 2
+	t2Findings, err := p.runStages(ctx, p.tier2, zr, t1Flags)
+	if err != nil {
+		return nil, fmt.Errorf("tier 2: %w", err)
+	}
+	result.Findings = append(result.Findings, t2Findings...)
+
+	// Any BLOCK from Tier 2 → reject.
+	if hasBlock(t2Findings) {
+		result.Pass = false
+		result.Duration = time.Since(start)
+		p.logResult(result, s)
+		return result, nil
+	}
+
+	// Tier 2 passed — accept with all flags recorded.
+	// In Phase 3, unresolved flags would escalate to Tier 3 (LLM).
 	result.Duration = time.Since(start)
 	p.logResult(result, s)
 	return result, nil
@@ -150,6 +186,26 @@ func collectFlags(findings []Finding) []Finding {
 		}
 	}
 	return flags
+}
+
+// hasDependencyFiles checks if the ZIP contains any dependency manifest files
+// that warrant Tier 2 deep scanning even if Tier 1 produced no flags.
+func hasDependencyFiles(zr *zip.Reader) bool {
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		name := strings.TrimPrefix(f.Name, "./")
+		switch {
+		case name == "requirements.txt" || strings.HasSuffix(name, "/requirements.txt"):
+			return true
+		case name == "package.json" || strings.HasSuffix(name, "/package.json"):
+			return true
+		case name == "pyproject.toml" || strings.HasSuffix(name, "/pyproject.toml"):
+			return true
+		}
+	}
+	return false
 }
 
 func verdictString(pass bool) string {
