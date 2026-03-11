@@ -3,6 +3,7 @@ package scanner
 import (
 	"archive/zip"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -46,6 +47,16 @@ func CheckZIPSafety(zr *zip.Reader) error {
 
 	var totalDecompressed uint64
 	for _, f := range zr.File {
+		// Reject path traversal entries.
+		if strings.Contains(f.Name, "..") {
+			return fmt.Errorf("zip contains path traversal entry: %s", f.Name)
+		}
+
+		// Reject symlinks.
+		if f.FileInfo().Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("zip contains symlink entry: %s", f.Name)
+		}
+
 		// Check nested archives.
 		ext := strings.ToLower(filepath.Ext(f.Name))
 		if nestedArchiveExts[ext] {

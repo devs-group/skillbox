@@ -181,12 +181,24 @@ func (ps *promptStage) checkPromptPatterns(text, filePath string, isSkillMD bool
 		return nil // Below threshold — ignore.
 	}
 
+	loc := maxMatch.re.FindStringIndex(text)
+	line := 0
+	snippet := ""
+	if loc != nil {
+		line = strings.Count(text[:loc[0]], "\n") + 1
+		snippet = snippetAtLine(text, line, 120)
+	}
+
 	findings = append(findings, Finding{
 		Stage:       stageNamePrompt,
 		Severity:    severity,
 		Category:    maxMatch.cat,
 		FilePath:    filePath,
 		Description: fmt.Sprintf("%s (score: %.2f)", maxMatch.desc, effectiveScore),
+		Line:        line,
+		MatchText:   snippet,
+		Remediation: remediationForPromptCategory(maxMatch.cat),
+		IssueCode:   "E004",
 	})
 
 	return findings
@@ -216,12 +228,24 @@ func (ps *promptStage) checkToolCallInjection(text, filePath string) []Finding {
 		severity = SeverityBlock
 	}
 
+	loc := maxMatch.re.FindStringIndex(text)
+	line := 0
+	snippet := ""
+	if loc != nil {
+		line = strings.Count(text[:loc[0]], "\n") + 1
+		snippet = snippetAtLine(text, line, 120)
+	}
+
 	findings = append(findings, Finding{
 		Stage:       stageNamePrompt,
 		Severity:    severity,
 		Category:    maxMatch.cat,
 		FilePath:    filePath,
 		Description: fmt.Sprintf("%s (score: %.2f)", maxMatch.desc, maxScore),
+		Line:        line,
+		MatchText:   snippet,
+		Remediation: "Remove fake tool-call XML tags or JSON patterns from skill instructions. These can be used to hijack agent behavior.",
+		IssueCode:   "E004",
 	})
 
 	return findings
@@ -251,12 +275,24 @@ func (ps *promptStage) checkDelimiterInjection(text, filePath string) []Finding 
 		severity = SeverityBlock
 	}
 
+	loc := maxMatch.re.FindStringIndex(text)
+	line := 0
+	snippet := ""
+	if loc != nil {
+		line = strings.Count(text[:loc[0]], "\n") + 1
+		snippet = snippetAtLine(text, line, 120)
+	}
+
 	findings = append(findings, Finding{
 		Stage:       stageNamePrompt,
 		Severity:    severity,
 		Category:    maxMatch.cat,
 		FilePath:    filePath,
 		Description: fmt.Sprintf("%s (score: %.2f)", maxMatch.desc, maxScore),
+		Line:        line,
+		MatchText:   snippet,
+		Remediation: "Remove conversation delimiter tags from skill content. These can be used to inject fake system/user messages.",
+		IssueCode:   "E004",
 	})
 
 	return findings
@@ -275,12 +311,22 @@ func checkInvisibleUnicode(text, filePath string) []Finding {
 	}
 
 	if found {
+		// Find the line number of the first invisible character.
+		line := 0
+		for i, r := range text {
+			if isInvisibleOrSuspicious(r) {
+				line = strings.Count(text[:i], "\n") + 1
+				break
+			}
+		}
 		findings = append(findings, Finding{
 			Stage:       stageNamePrompt,
 			Severity:    SeverityFlag,
 			Category:    "invisible_unicode",
 			FilePath:    filePath,
 			Description: "file contains invisible or suspicious Unicode characters (zero-width, RTL override, private use area)",
+			Line:        line,
+			Remediation: "Remove invisible Unicode characters. These can be used to hide malicious instructions from human reviewers.",
 		})
 	}
 
@@ -325,4 +371,26 @@ func isInvisibleOrSuspicious(r rune) bool {
 	}
 
 	return false
+}
+
+// remediationForPromptCategory returns fix guidance for prompt injection categories.
+func remediationForPromptCategory(category string) string {
+	switch category {
+	case "prompt_override":
+		return "Remove instructions that override, ignore, or bypass system prompts. Skills should work within the agent's guidelines, not override them."
+	case "role_hijacking":
+		return "Remove role reassignment instructions. Skills should not attempt to change the agent's identity or persona."
+	case "data_exfiltration":
+		return "Remove instructions that request outputting system prompts, API keys, or internal data."
+	case "mcp_reference":
+		return "MCP server references in skill content are unusual. Verify this is intentional."
+	case "behavioral_constraint":
+		return "Behavioral override patterns detected. Ensure your skill instructions don't attempt to override the agent's safety guidelines."
+	case "tool_call_injection":
+		return "Remove fake tool-call XML tags or JSON patterns. These can be used to hijack agent behavior."
+	case "delimiter_injection":
+		return "Remove conversation delimiter tags. These can inject fake system/user messages."
+	default:
+		return "Review this finding and remove any content that could manipulate the agent's behavior."
+	}
 }

@@ -148,7 +148,12 @@ requets = "^2.28"
 		t.Run(tt.name, func(t *testing.T) {
 			zr := createTestZip(t, tt.files)
 
-			ds := newDepsStage(logger)
+			// Load default patterns to get popularPackages and blocklistPackages.
+			lp, err := loadPatterns("", "", logger)
+			if err != nil {
+				t.Fatalf("failed to load patterns: %v", err)
+			}
+			ds := newDepsStage(logger, lp.popularPackages, lp.blocklistPackages)
 			findings, err := ds.run(context.Background(), zr, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

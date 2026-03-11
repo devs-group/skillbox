@@ -52,6 +52,8 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 
 		// Scanner admin endpoints
 		v1.GET("/admin/scanner/stats", handlers.ScannerStats(pipeline))
+		v1.GET("/admin/scanner/patterns", handlers.ScannerGetPatterns(pipeline))
+		v1.PUT("/admin/scanner/patterns", handlers.ScannerSetPatterns(pipeline))
 
 		// File/artifact endpoints
 		if len(col) > 0 && col[0] != nil {

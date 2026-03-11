@@ -91,33 +91,11 @@ func main() {
 			}
 		}
 
-		// Configure external scanner (ClamAV/YARA).
-		var ext scanner.ExternalScanner
-		switch cfg.ScannerExternalType {
-		case "clamav":
-			var err error
-			ext, err = scanner.NewClamAVScanner(cfg.ScannerClamAVAddress)
-			if err != nil {
-				slog.Error("failed to initialize ClamAV scanner", "error", err)
-				os.Exit(1)
-			}
-			slog.Info("ClamAV scanner enabled", "address", cfg.ScannerClamAVAddress)
-		case "yara":
-			var err error
-			ext, err = scanner.NewYARAScanner(cfg.ScannerYARARulesDir)
-			if err != nil {
-				slog.Error("failed to initialize YARA scanner", "error", err)
-				os.Exit(1)
-			}
-			slog.Info("YARA scanner enabled", "rules_dir", cfg.ScannerYARARulesDir)
-		}
-
-		pipeline = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, ext)
+		pipeline = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, cfg.ScannerPatternsFile, cfg.ScannerOSSFFeedDir)
 		sc = pipeline
 		slog.Info("security scanner enabled",
 			"timeout", cfg.ScannerTimeout,
 			"llm_enabled", cfg.ScannerLLMEnabled,
-			"external", cfg.ScannerExternalType,
 		)
 	} else {
 		sc = &scanner.NoopScanner{}

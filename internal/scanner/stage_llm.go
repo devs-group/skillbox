@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
+	"crypto/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -347,12 +347,15 @@ func (ls *llmStage) parseResponse(text, expectedCanary string, priorFlags []Find
 	return findings, nil
 }
 
-// randomAlphanumeric generates a random string of the given length.
+// randomAlphanumeric generates a cryptographically random string of the given length.
 func randomAlphanumeric(n int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
+	}
 	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
+		b[i] = chars[b[i]%byte(len(chars))]
 	}
 	return string(b)
 }

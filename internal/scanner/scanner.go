@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/devs-group/skillbox/internal/skill"
@@ -30,35 +31,44 @@ type stage interface {
 
 // Pipeline implements Scanner by running tiered scan stages.
 type Pipeline struct {
+	mu      sync.RWMutex
 	tier1   []stage
 	tier2   []stage
 	tier3   []stage // LLM deep analysis (optional, empty when disabled)
 	timeout time.Duration
 	logger  *slog.Logger
 	metrics *Metrics
+
+	// customPatterns holds the currently active custom pattern entries
+	// (user-uploaded, separate from embedded defaults). Protected by mu.
+	customPatterns *PatternFile
+	ossfFeedDir    string
 }
 
 // New creates a new scanner Pipeline configured for Tier 1 and Tier 2 scanning.
 // If llmCfg is non-nil, Tier 3 LLM analysis is enabled.
-// If ext is non-nil, the external scanner runs as part of Tier 2.
-func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, ext ExternalScanner) *Pipeline {
-	p := &Pipeline{
-		tier1: []stage{
-			newPatternStage(logger),
-		},
-		tier2: []stage{
-			newDepsStage(logger),
-			newPromptStage(logger),
-		},
-		timeout: timeout,
-		logger:  logger,
-		metrics: NewMetrics(),
+// customPatternsFile and ossfFeedDir are optional paths for custom pattern sources.
+func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, customPatternsFile, ossfFeedDir string) *Pipeline {
+	lp, err := loadPatterns(customPatternsFile, ossfFeedDir, logger)
+	if err != nil {
+		logger.Warn("failed to load external patterns, using embedded defaults", "error", err)
+		// Fall back to embedded defaults with no custom overlay.
+		lp, _ = loadPatterns("", "", logger)
 	}
 
-	// External scanner (ClamAV/YARA) runs in Tier 2 — fast, catches binary malware.
-	if ext != nil {
-		p.tier2 = append(p.tier2, newExternalStage(ext, logger))
-		logger.Info("external scanner enabled", "engine", ext.Name())
+	p := &Pipeline{
+		tier1: []stage{
+			newPatternStage(logger, lp),
+		},
+		tier2: []stage{
+			newDepsStage(logger, lp.popularPackages, lp.blocklistPackages),
+			newPromptStage(logger),
+			newSecurityStage(logger),
+		},
+		timeout:     timeout,
+		logger:      logger,
+		metrics:     NewMetrics(),
+		ossfFeedDir: ossfFeedDir,
 	}
 
 	if llmCfg != nil {
@@ -72,6 +82,64 @@ func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, ext Exte
 // Metrics returns the scanner's metrics tracker.
 func (p *Pipeline) Metrics() *Metrics {
 	return p.metrics
+}
+
+// GetCustomPatterns returns the currently active custom pattern definitions.
+// Returns nil if no custom patterns have been loaded.
+func (p *Pipeline) GetCustomPatterns() *PatternFile {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.customPatterns
+}
+
+// SetCustomPatterns replaces the custom pattern overlay and rebuilds
+// the Tier 1 and Tier 2 stages with the merged pattern set.
+// Pass nil to clear all custom patterns and revert to defaults only.
+func (p *Pipeline) SetCustomPatterns(pf *PatternFile) error {
+	// Build merged patterns: embedded defaults + custom overlay + OSSF feed.
+	base, err := parsePatternFile(defaultPatternsYAML)
+	if err != nil {
+		return fmt.Errorf("parse embedded defaults: %w", err)
+	}
+
+	if pf != nil {
+		base = mergePatternFiles(base, pf)
+	}
+
+	if p.ossfFeedDir != "" {
+		pkgs, err := loadOSSFFeed(p.ossfFeedDir, p.logger)
+		if err != nil {
+			p.logger.Warn("failed to reload OSSF feed", "error", err)
+		} else {
+			base.BlocklistPackages = append(base.BlocklistPackages, pkgs...)
+		}
+	}
+
+	lp, err := compilePatternFile(base)
+	if err != nil {
+		return fmt.Errorf("compile patterns: %w", err)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.customPatterns = pf
+	p.tier1 = []stage{newPatternStage(p.logger, lp)}
+	// Rebuild only deps stage (uses blocklist/popular from patterns).
+	// Prompt and security stages are stateless.
+	p.tier2 = []stage{
+		newDepsStage(p.logger, lp.popularPackages, lp.blocklistPackages),
+		newPromptStage(p.logger),
+		newSecurityStage(p.logger),
+	}
+
+	p.logger.Info("custom patterns reloaded",
+		"block_patterns", len(lp.blockPatterns),
+		"flag_patterns", len(lp.flagPatterns),
+		"blocklist_packages", len(lp.blocklistPackages),
+	)
+
+	return nil
 }
 
 // Scan runs the tiered scanning pipeline.
@@ -92,6 +160,11 @@ func (p *Pipeline) Metrics() *Metrics {
 //   - LLM unavailable → fail closed (return error).
 //   - LLM says benign → accept.
 func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*ScanResult, error) {
+	// Hold read lock for the duration of the scan to prevent
+	// stage replacement mid-scan during pattern hot-reload.
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
@@ -123,16 +196,9 @@ func (p *Pipeline) Scan(ctx context.Context, zr *zip.Reader, s *skill.Skill) (*S
 		return result, nil
 	}
 
-	// Determine if Tier 2 is needed.
+	// Tier 2 always runs: security analysis (secrets, URLs, etc.) applies to all uploads,
+	// and dependency/prompt checks run when relevant files are present.
 	t1Flags := collectFlags(t1Findings)
-	needsTier2 := len(t1Flags) > 0 || hasDependencyFiles(zr)
-
-	if !needsTier2 {
-		// Clean upload — accept at Tier 1.
-		result.Duration = time.Since(start)
-		p.logResult(result, s)
-		return result, nil
-	}
 
 	// --- Tier 2: Deep Scan ---
 	result.Tier = 2
@@ -194,8 +260,9 @@ func (p *Pipeline) runStages(ctx context.Context, stages []stage, zr *zip.Reader
 	return all, nil
 }
 
-// logResult emits a structured log entry for the scan verdict.
+// logResult generates the scan summary and emits a structured log entry for the scan verdict.
 func (p *Pipeline) logResult(result *ScanResult, s *skill.Skill) {
+	result.GenerateSummary()
 	categories := make([]string, 0, len(result.Findings))
 	seen := make(map[string]bool)
 	for _, f := range result.Findings {

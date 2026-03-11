@@ -499,6 +499,86 @@ func ScannerStats(p *scanner.Pipeline) gin.HandlerFunc {
 	}
 }
 
+// ScannerGetPatterns handles GET /v1/admin/scanner/patterns.
+// Returns the currently active custom pattern definitions (user-uploaded overlay).
+func ScannerGetPatterns(p *scanner.Pipeline) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil {
+			c.JSON(http.StatusOK, gin.H{"enabled": false})
+			return
+		}
+		patterns := p.GetCustomPatterns()
+		if patterns == nil {
+			// No custom patterns — return empty structure.
+			c.JSON(http.StatusOK, &scanner.PatternFile{Version: 1})
+			return
+		}
+		c.JSON(http.StatusOK, patterns)
+	}
+}
+
+// ScannerSetPatterns handles PUT /v1/admin/scanner/patterns.
+// Accepts a JSON or YAML body with custom pattern definitions and
+// hot-reloads the scanner pipeline with the new patterns merged
+// on top of the embedded defaults.
+//
+// Send an empty body or {"version": 1} to clear all custom patterns.
+func ScannerSetPatterns(p *scanner.Pipeline) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil {
+			response.RespondError(c, http.StatusServiceUnavailable, "scanner_disabled", "security scanner is not enabled")
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20)) // 1MB max
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read request body: "+err.Error())
+			return
+		}
+
+		if len(body) == 0 {
+			// Clear custom patterns.
+			if err := p.SetCustomPatterns(nil); err != nil {
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to reload patterns: "+err.Error())
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "cleared", "message": "Custom patterns cleared, using defaults only"})
+			return
+		}
+
+		pf, err := scanner.ParsePatternData(body)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_patterns", "failed to parse patterns: "+err.Error())
+			return
+		}
+
+		// Check if this is effectively empty (version-only, no actual patterns).
+		if len(pf.BlockPatterns) == 0 && len(pf.FlagPatterns) == 0 &&
+			len(pf.CommonBlockPatterns) == 0 && len(pf.CommonFlagPatterns) == 0 &&
+			len(pf.BlocklistPackages) == 0 && len(pf.PopularPackages) == 0 {
+			if err := p.SetCustomPatterns(nil); err != nil {
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to reload patterns: "+err.Error())
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "cleared", "message": "Custom patterns cleared, using defaults only"})
+			return
+		}
+
+		if err := p.SetCustomPatterns(pf); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_patterns", "failed to apply patterns: "+err.Error())
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":             "loaded",
+			"block_patterns":     len(pf.BlockPatterns),
+			"flag_patterns":      len(pf.FlagPatterns),
+			"blocklist_packages": len(pf.BlocklistPackages),
+			"popular_packages":   len(pf.PopularPackages),
+		})
+	}
+}
+
 // ListSkills handles GET /v1/skills.
 // It returns all skill metadata for the authenticated tenant, including
 // descriptions so agents can decide which skill to use.

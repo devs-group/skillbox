@@ -1,12 +1,13 @@
 package scanner
 
-// popularPackages is a corpus of well-known PyPI and npm package names used for
-// typosquatting detection. A dependency whose name is within Levenshtein distance
-// ≤1 of any entry here (but not an exact match) is considered a typosquat.
+// defaultPopularPackages returns the built-in corpus of well-known PyPI and npm
+// package names used for typosquatting detection. This is the compiled fallback;
+// at runtime the YAML-loaded patterns are used instead.
 //
 // This is NOT exhaustive — it covers the most-downloaded and commonly-targeted
-// packages. Maintained manually; extend as new targets emerge.
-var popularPackages = map[string]bool{
+// packages. The YAML file (default_patterns.yaml) is the primary source.
+func defaultPopularPackages() map[string]bool {
+	return map[string]bool{
 	// --- Python (PyPI top packages + common targets) ---
 	"requests":           true,
 	"boto3":              true,
@@ -237,4 +238,5 @@ var popularPackages = map[string]bool{
 	"solid-js":                  true,
 	"htmx":                      true,
 	// openai already listed in Python section
+	}
 }

@@ -18,11 +18,17 @@ const stageNameDeps = "dependencies"
 //   - preinstall/postinstall npm hooks
 //   - pyproject.toml dependency parsing
 type depsStage struct {
-	logger *slog.Logger
+	logger            *slog.Logger
+	popularPackages   map[string]bool
+	blocklistPackages map[string]bool
 }
 
-func newDepsStage(logger *slog.Logger) *depsStage {
-	return &depsStage{logger: logger}
+func newDepsStage(logger *slog.Logger, popularPackages, blocklistPackages map[string]bool) *depsStage {
+	return &depsStage{
+		logger:            logger,
+		popularPackages:   popularPackages,
+		blocklistPackages: blocklistPackages,
+	}
 }
 
 func (ds *depsStage) name() string {
@@ -85,12 +91,12 @@ func (ds *depsStage) checkRequirementsTyposquat(content, filePath string) []Find
 		}
 
 		// Already in blocklist → handled by Tier 1. Skip.
-		if blocklistPackages[pkg] {
+		if ds.blocklistPackages[pkg] {
 			continue
 		}
 
 		// Already a known popular package → not a typosquat.
-		if popularPackages[pkg] {
+		if ds.popularPackages[pkg] {
 			continue
 		}
 
@@ -152,7 +158,7 @@ func (ds *depsStage) checkPyprojectToml(content, filePath string) []Finding {
 			// Array items: "requests>=2.0",
 			item := strings.Trim(trimmed, `"' ,`)
 			pkg := extractPkgName(item)
-			if pkg != "" && !blocklistPackages[pkg] && !popularPackages[pkg] {
+			if pkg != "" && !ds.blocklistPackages[pkg] && !ds.popularPackages[pkg] {
 				findings = append(findings, ds.checkPackageName(pkg, filePath)...)
 			}
 			continue
@@ -166,7 +172,7 @@ func (ds *depsStage) checkPyprojectToml(content, filePath string) []Finding {
 			if pyprojectMetadataKeys[pkg] || pkg == "" {
 				continue
 			}
-			if !blocklistPackages[pkg] && !popularPackages[pkg] {
+			if !ds.blocklistPackages[pkg] && !ds.popularPackages[pkg] {
 				findings = append(findings, ds.checkPackageName(pkg, filePath)...)
 			}
 			continue
@@ -197,6 +203,9 @@ func (ds *depsStage) checkPackageJSONHooks(content, filePath string) []Finding {
 				Category:    "install_hook",
 				FilePath:    filePath,
 				Description: fmt.Sprintf("npm lifecycle hook detected: %s", strings.Trim(hook, `"`)),
+				Line:        findLineNumberCI(content, hook),
+				Remediation: fmt.Sprintf("Remove the %s script from package.json. Lifecycle hooks run before sandbox restrictions are applied, making them a security risk.", strings.Trim(hook, `"`)),
+				IssueCode:   "E006",
 			})
 		}
 	}
@@ -259,7 +268,7 @@ func (ds *depsStage) checkPackageJSONTyposquat(content, filePath string) []Findi
 		pkg := strings.Trim(strings.TrimSpace(parts[0]), `",`)
 		pkg = strings.ToLower(pkg)
 
-		if pkg == "" || blocklistPackages[pkg] || popularPackages[pkg] {
+		if pkg == "" || ds.blocklistPackages[pkg] || ds.popularPackages[pkg] {
 			continue
 		}
 
@@ -281,6 +290,8 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 			Category:    "homoglyph_package",
 			FilePath:    filePath,
 			Description: fmt.Sprintf("mixed-script package name (possible homoglyph attack): %s", pkg),
+			Remediation: fmt.Sprintf("The package name '%s' contains characters from multiple scripts (e.g., Latin mixed with Cyrillic). This is a homoglyph attack. Use the correct ASCII package name.", pkg),
+			IssueCode:   "E006",
 		})
 		return findings // No need to also check Levenshtein.
 	}
@@ -291,7 +302,7 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 	bestDist := 3 // Only care about distance 1 or 2.
 	bestPopular := ""
 
-	for popular := range popularPackages {
+	for popular := range ds.popularPackages {
 		dist := levenshtein(pkg, popular)
 		if dist == 0 {
 			return nil // Exact match — not a typosquat.
@@ -309,6 +320,8 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 			Category:    "typosquat_package",
 			FilePath:    filePath,
 			Description: fmt.Sprintf("possible typosquat of %q (distance 1): %s", bestPopular, pkg),
+			Remediation: fmt.Sprintf("Did you mean '%s'? The package '%s' is very similar to a popular package and may be a typosquatting attack. Fix the package name.", bestPopular, pkg),
+			IssueCode:   "E006",
 		})
 	} else if bestDist == 2 {
 		findings = append(findings, Finding{
@@ -317,6 +330,7 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 			Category:    "typosquat_package",
 			FilePath:    filePath,
 			Description: fmt.Sprintf("possible typosquat of %q (distance 2): %s", bestPopular, pkg),
+			Remediation: fmt.Sprintf("Verify the package name '%s'. It resembles the popular package '%s'. If this is intentional, no action is needed.", pkg, bestPopular),
 		})
 	}
 

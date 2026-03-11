@@ -58,10 +58,9 @@ type Config struct {
 	ScannerLLMTimeout       time.Duration
 	ScannerLLMMaxConcurrent int
 
-	// Security scanner — external scanners (Tier 2, optional)
-	ScannerExternalType  string // "none", "clamav", "yara"
-	ScannerClamAVAddress string // "tcp://127.0.0.1:3310" or "unix:/run/clamav/clamd.ctl"
-	ScannerYARARulesDir  string // path to directory of .yar rule files
+	// Security scanner — custom patterns (optional)
+	ScannerPatternsFile string // path to custom patterns YAML (merged on top of defaults)
+	ScannerOSSFFeedDir  string // path to directory of OSV JSON files from OSSF malicious packages feed
 
 	// Server
 	APIPort           string
@@ -281,23 +280,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_API_KEY is required when SKILLBOX_SCANNER_LLM_ENABLED=true")
 	}
 
-	// External scanner (Tier 2, optional).
-	cfg.ScannerExternalType = strings.ToLower(envOrDefault("SKILLBOX_SCANNER_EXTERNAL_TYPE", "none"))
-	switch cfg.ScannerExternalType {
-	case "none", "clamav", "yara":
-		// valid
-	default:
-		return nil, fmt.Errorf("SKILLBOX_SCANNER_EXTERNAL_TYPE must be none, clamav, or yara, got %q", cfg.ScannerExternalType)
-	}
-	cfg.ScannerClamAVAddress = envOrDefault("SKILLBOX_SCANNER_CLAMAV_ADDRESS", "tcp://127.0.0.1:3310")
-	cfg.ScannerYARARulesDir = get("SKILLBOX_SCANNER_YARA_RULES_DIR")
-
-	if cfg.ScannerExternalType == "clamav" && cfg.ScannerClamAVAddress == "" {
-		return nil, fmt.Errorf("SKILLBOX_SCANNER_CLAMAV_ADDRESS is required when SKILLBOX_SCANNER_EXTERNAL_TYPE=clamav")
-	}
-	if cfg.ScannerExternalType == "yara" && cfg.ScannerYARARulesDir == "" {
-		return nil, fmt.Errorf("SKILLBOX_SCANNER_YARA_RULES_DIR is required when SKILLBOX_SCANNER_EXTERNAL_TYPE=yara")
-	}
+	// Custom scanner patterns (optional).
+	cfg.ScannerPatternsFile = get("SKILLBOX_SCANNER_PATTERNS_FILE")
+	cfg.ScannerOSSFFeedDir = get("SKILLBOX_SCANNER_OSSF_FEED_DIR")
 
 	return cfg, nil
 }
