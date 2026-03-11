@@ -356,6 +356,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 						Content: content,
 						Mode:    0o644,
 					})
+					// Also mount into /sandbox/input/ so standard skills
+					// (which read from SANDBOX_INPUT_DIR) discover session
+					// files without modification.
+					sessionUploads = append(sessionUploads, sandbox.FileUpload{
+						Path:    "/sandbox/input/" + sf.Name,
+						Content: content,
+						Mode:    0o644,
+					})
 				}
 				if len(sessionUploads) > 0 {
 					if uploadErr := r.sandbox.UploadFiles(execCtx, execdURL, sessionUploads); uploadErr != nil {
@@ -477,7 +485,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 					result.FilesURL = artifactURL
 					result.FilesList = filesList
 
-					// Upload individual files so /v1/files/:id/download works.
+					// Upload individual files and create DB records.
+					fileSizes := make(map[string]int64, len(filesList))
 					for _, fileName := range filesList {
 						s3Key := fmt.Sprintf("%s/%s/%s", req.TenantID, executionID, fileName)
 						filePath := filepath.Join(tmpDir, fileName)
@@ -491,13 +500,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 							_ = f.Close()
 							continue
 						}
+						fileSizes[fileName] = info.Size()
 						if _, upErr := r.artifacts.UploadObject(ctx, s3Key, f, info.Size(), detectRunnerContentType(fileName)); upErr != nil {
 							log.Printf("runner: failed to upload individual file %s: %v", fileName, upErr)
 						}
 						_ = f.Close()
 					}
 
-					// Create file records in the database for each collected artifact.
 					for _, fileName := range filesList {
 						s3Key := fmt.Sprintf("%s/%s/%s", req.TenantID, executionID, fileName)
 						fileRecord := &store.File{
@@ -505,6 +514,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 							ExecutionID: executionID,
 							Name:        fileName,
 							ContentType: detectRunnerContentType(fileName),
+							SizeBytes:   fileSizes[fileName],
 							S3Key:       s3Key,
 							Version:     1,
 						}
@@ -523,10 +533,19 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		if sessionErr != nil {
 			log.Printf("runner: failed to get session for persistence: %v", sessionErr)
 		} else {
-			sessionOutFiles, searchErr := r.sandbox.SearchFiles(execCtx, execdURL, "/sandbox/out/session", "*")
-			if searchErr != nil {
-				log.Printf("runner: failed to search session output files: %v", searchErr)
-			} else {
+			// Collect output files from both /sandbox/out/session/ (session-aware
+			// skills) and /sandbox/out/files/ (standard skills) so all outputs
+			// persist across session executions.
+			var sessionOutFiles []sandbox.FileInfo
+			for _, dir := range []string{"/sandbox/out/session", "/sandbox/out/files"} {
+				found, sErr := r.sandbox.SearchFiles(execCtx, execdURL, dir, "*")
+				if sErr != nil {
+					log.Printf("runner: failed to search %s: %v", dir, sErr)
+					continue
+				}
+				sessionOutFiles = append(sessionOutFiles, found...)
+			}
+			{
 				for _, entry := range sessionOutFiles {
 					filename := filepath.Base(entry.Path)
 					if filename == ".keep" {
