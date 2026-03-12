@@ -90,14 +90,33 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID 
 	if ms, ok := sm.sessions[key]; ok {
 		ms.LastUsedAt = time.Now()
 		sm.mu.Unlock()
-		return ms, nil
-	}
-	// Check capacity before unlocking.
-	if len(sm.sessions) >= sm.config.MaxSessionSandboxes {
+
+		// Health check: verify the cached sandbox is still reachable.
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := sm.client.Ping(pingCtx, ms.ExecDURL); err != nil {
+			slog.Warn("session manager: stale sandbox detected, recreating",
+				"key", key,
+				"sandbox_id", ms.SandboxID,
+				"error", err,
+			)
+			// Sync files before removing (best-effort).
+			_ = sm.SyncSessionFiles(ctx, key)
+			sm.mu.Lock()
+			delete(sm.sessions, key)
+			sm.mu.Unlock()
+			// Fall through to create a new sandbox below.
+		} else {
+			return ms, nil
+		}
+	} else {
+		// Check capacity while still holding the lock.
+		if len(sm.sessions) >= sm.config.MaxSessionSandboxes {
+			sm.mu.Unlock()
+			return nil, fmt.Errorf("session manager: max concurrent session sandboxes reached (%d)", sm.config.MaxSessionSandboxes)
+		}
 		sm.mu.Unlock()
-		return nil, fmt.Errorf("session manager: max concurrent session sandboxes reached (%d)", sm.config.MaxSessionSandboxes)
 	}
-	sm.mu.Unlock()
 
 	// Coalesce concurrent creations for the same key.
 	// Use a detached context with a generous timeout so that sandbox
@@ -275,6 +294,13 @@ func (sm *SessionManager) mountSessionFiles(ctx context.Context, tenantID, sessi
 	if len(uploads) == 0 {
 		return nil
 	}
+
+	slog.Info("session manager: restoring session files",
+		"tenant_id", tenantID,
+		"session_id", sessionID,
+		"files_found", len(files),
+		"files_restored", len(uploads),
+	)
 
 	return sm.client.UploadFiles(ctx, execdURL, uploads)
 }
@@ -471,6 +497,7 @@ func (sm *SessionManager) SyncSessionFiles(ctx context.Context, key string) erro
 
 	// Sync everything from the single session directory.
 	syncDirs := []string{"/sandbox/session"}
+	syncedCount := 0
 
 	for _, dir := range syncDirs {
 		files, err := sm.client.SearchFiles(ctx, ms.ExecDURL, dir, "**")
@@ -544,8 +571,19 @@ func (sm *SessionManager) SyncSessionFiles(ctx context.Context, key string) erro
 					"name", name,
 					"error", err,
 				)
+			} else {
+				syncedCount++
 			}
 		}
+	}
+
+	if syncedCount > 0 {
+		slog.Info("session manager: sync completed",
+			"key", key,
+			"tenant_id", ms.TenantID,
+			"session_id", ms.SessionID,
+			"files_synced", syncedCount,
+		)
 	}
 
 	return nil
