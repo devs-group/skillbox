@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/devs-group/skillbox/internal/api/middleware"
 	"github.com/devs-group/skillbox/internal/api/response"
+	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/sandbox"
+	"github.com/devs-group/skillbox/internal/store"
 )
 
 // maxSandboxRequestBody is the maximum request body size for sandbox API calls (10 MiB).
@@ -15,12 +20,14 @@ const maxSandboxRequestBody = 10 << 20
 
 // SandboxHandler groups sandbox shell HTTP handlers and their dependencies.
 type SandboxHandler struct {
-	manager *sandbox.SessionManager
+	manager  *sandbox.SessionManager
+	registry *registry.Registry
+	store    *store.Store
 }
 
-// NewSandboxHandler creates a handler with the session manager dependency.
-func NewSandboxHandler(sm *sandbox.SessionManager) *SandboxHandler {
-	return &SandboxHandler{manager: sm}
+// NewSandboxHandler creates a handler with the session manager, registry, and store dependencies.
+func NewSandboxHandler(sm *sandbox.SessionManager, reg *registry.Registry, s *store.Store) *SandboxHandler {
+	return &SandboxHandler{manager: sm, registry: reg, store: s}
 }
 
 // LimitBody returns middleware that limits the request body size for sandbox endpoints.
@@ -124,7 +131,7 @@ func (h *SandboxHandler) Execute(c *gin.Context) {
 		req.WorkDir = "/sandbox/session"
 	}
 	// Validate workdir to prevent directory traversal.
-	if err := sandbox.ValidateSandboxPath(req.WorkDir, sandbox.PathModeRead); err != nil {
+	if err := sandbox.ValidateSandboxPath(req.WorkDir); err != nil {
 		response.RespondError(c, http.StatusBadRequest, "bad_request", "invalid workdir: "+err.Error())
 		return
 	}
@@ -277,4 +284,113 @@ func (h *SandboxHandler) Destroy(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// UploadSkillRequest is the body for POST /v1/sandbox/upload-skill.
+type UploadSkillRequest struct {
+	Skill   string `json:"skill"`
+	Version string `json:"version"`
+}
+
+// UploadSkillResponse is the response for POST /v1/sandbox/upload-skill.
+type UploadSkillResponse struct {
+	Files []string `json:"files"`
+}
+
+// UploadSkill handles POST /v1/sandbox/upload-skill.
+// It fetches skill files from the registry and uploads them into
+// the session sandbox at /sandbox/session/skills/{name}/.
+func (h *SandboxHandler) UploadSkill(c *gin.Context) {
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
+		return
+	}
+
+	var req UploadSkillRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "invalid request body: "+err.Error())
+		return
+	}
+	if req.Skill == "" {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "skill is required")
+		return
+	}
+	if req.Version == "" {
+		req.Version = "latest"
+	}
+
+	if h.registry == nil {
+		response.RespondError(c, http.StatusInternalServerError, "config_error", "skill registry not configured")
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+
+	// Resolve "latest" to the actual version from the database.
+	if req.Version == "latest" && h.store != nil {
+		resolved, err := h.store.ResolveLatestVersion(c.Request.Context(), tenantID, req.Skill)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				response.RespondError(c, http.StatusNotFound, "skill_not_found", "skill not found: "+req.Skill+"@latest")
+				return
+			}
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to resolve latest version: "+err.Error())
+			return
+		}
+		req.Version = resolved
+	}
+
+	// Load skill from registry (download zip, extract to temp dir).
+	loaded, err := registry.LoadSkill(c.Request.Context(), h.registry, tenantID, req.Skill, req.Version)
+	if err != nil {
+		response.RespondError(c, http.StatusNotFound, "skill_not_found", "failed to load skill: "+err.Error())
+		return
+	}
+	defer os.RemoveAll(loaded.Dir) //nolint:errcheck
+
+	// Walk extracted files and build upload list for /sandbox/session/skills/.
+	var uploads []sandbox.FileUpload
+	var uploadedPaths []string
+
+	walkErr := filepath.Walk(loaded.Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(loaded.Dir, path)
+		if relErr != nil {
+			return relErr
+		}
+		if rel == "." || info.IsDir() {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		remotePath := "/sandbox/session/skills/" + req.Skill + "/" + filepath.ToSlash(rel)
+		uploads = append(uploads, sandbox.FileUpload{
+			Path:    remotePath,
+			Content: content,
+			Mode:    0o644,
+		})
+		uploadedPaths = append(uploadedPaths, filepath.ToSlash(rel))
+		return nil
+	})
+	if walkErr != nil {
+		response.RespondError(c, http.StatusInternalServerError, "walk_error", "failed to read skill files: "+walkErr.Error())
+		return
+	}
+
+	if len(uploads) == 0 {
+		response.RespondError(c, http.StatusBadRequest, "empty_skill", "skill contains no files")
+		return
+	}
+
+	// Upload all files to the session sandbox in a single batch.
+	if uploadErr := h.manager.UploadFiles(c.Request.Context(), key, uploads); uploadErr != nil {
+		response.RespondError(c, http.StatusInternalServerError, "upload_error", "failed to upload skill files to sandbox: "+uploadErr.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, UploadSkillResponse{Files: uploadedPaths})
 }

@@ -75,7 +75,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 
 		// Sandbox shell endpoints
 		if sm != nil {
-			sandboxHandler := handlers.NewSandboxHandler(sm)
+			sandboxHandler := handlers.NewSandboxHandler(sm, reg, s)
 			sbGroup := v1.Group("/sandbox")
 			sbGroup.Use(sandboxHandler.LimitBody())
 			{
@@ -84,6 +84,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 				sbGroup.POST("/write-file", sandboxHandler.WriteFile)
 				sbGroup.POST("/list-dir", sandboxHandler.ListDir)
 				sbGroup.POST("/sync", sandboxHandler.Sync)
+				sbGroup.POST("/upload-skill", sandboxHandler.UploadSkill)
 				sbGroup.DELETE("/:session", sandboxHandler.Destroy)
 			}
 		}

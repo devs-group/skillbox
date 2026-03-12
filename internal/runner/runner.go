@@ -31,8 +31,7 @@ type RunRequest struct {
 	Env        map[string]string `json:"env,omitempty"`
 	InputFiles []string          `json:"input_files,omitempty"` // file IDs from POST /v1/files
 	Entrypoint string            `json:"entrypoint,omitempty"`  // override the skill's default entrypoint
-	SessionID  string            `json:"session_id,omitempty"`  // external session ID for workspace persistence
-	MountOnly  bool              `json:"mount_only,omitempty"`  // skip execution, only mount files into sandbox
+	SessionID  string            `json:"session_id,omitempty"` // external session ID for workspace persistence
 	TenantID   string            `json:"-"`
 }
 
@@ -409,12 +408,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 			loadedSkill.Skill.Lang = "python"
 		}
 	}
-	// If mount_only is set, skip execution and return immediately.
-	if req.MountOnly {
-		result.Status = "mounted"
-		return result, nil
-	}
-
 	cmd := buildShellCommand(loadedSkill)
 	timeoutMs := int(timeout.Milliseconds())
 

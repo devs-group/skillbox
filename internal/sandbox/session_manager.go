@@ -189,12 +189,11 @@ func (sm *SessionManager) createSandbox(ctx context.Context, tenantID, externalI
 		return nil, fmt.Errorf("session manager: discover execd: %w", err)
 	}
 
-	// Create sandbox directory structure.
+	// Create sandbox directory structure — everything under /sandbox/session/.
 	placeholders := []FileUpload{
 		{Path: "/sandbox/session/.keep", Content: []byte(""), Mode: 0o644},
-		{Path: "/sandbox/scripts/.keep", Content: []byte(""), Mode: 0o644},
-		{Path: "/sandbox/input/.keep", Content: []byte(""), Mode: 0o644},
-		{Path: "/sandbox/out/session/.keep", Content: []byte(""), Mode: 0o644},
+		{Path: "/sandbox/session/skills/.keep", Content: []byte(""), Mode: 0o644},
+		{Path: "/sandbox/session/outputs/.keep", Content: []byte(""), Mode: 0o644},
 	}
 	if err := sm.client.UploadFiles(ctx, execdURL, placeholders); err != nil {
 		slog.Warn("session manager: failed to create placeholder dirs",
@@ -303,7 +302,7 @@ func (sm *SessionManager) Execute(ctx context.Context, key string, command, work
 // ReadFile downloads a file from the managed sandbox, validating the path
 // for read access.
 func (sm *SessionManager) ReadFile(ctx context.Context, key string, filePath string) ([]byte, error) {
-	if err := ValidateSandboxPath(filePath, PathModeRead); err != nil {
+	if err := ValidateSandboxPath(filePath); err != nil {
 		return nil, err
 	}
 
@@ -334,7 +333,7 @@ func (sm *SessionManager) ReadFile(ctx context.Context, key string, filePath str
 // WriteFile uploads a file to the managed sandbox, validating the path
 // for write access.
 func (sm *SessionManager) WriteFile(ctx context.Context, key string, filePath, content string) error {
-	if err := ValidateSandboxPath(filePath, PathModeWrite); err != nil {
+	if err := ValidateSandboxPath(filePath); err != nil {
 		return err
 	}
 
@@ -358,10 +357,32 @@ func (sm *SessionManager) WriteFile(ctx context.Context, key string, filePath, c
 	})
 }
 
+// UploadFiles uploads multiple files to the managed sandbox in a single
+// multipart request. Unlike WriteFile, this skips path validation so that
+// internal callers (e.g. skill mounting) can write to /sandbox/scripts/.
+func (sm *SessionManager) UploadFiles(ctx context.Context, key string, files []FileUpload) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	sm.mu.Lock()
+	ms, ok := sm.sessions[key]
+	if ok {
+		ms.LastUsedAt = time.Now()
+	}
+	sm.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("session manager: no sandbox for key %q", key)
+	}
+
+	return sm.client.UploadFiles(ctx, ms.ExecDURL, files)
+}
+
 // ListDir lists directory entries in the sandbox using SearchFiles, validating
 // the path for read access. It infers directories from file paths.
 func (sm *SessionManager) ListDir(ctx context.Context, key string, dirPath string, maxDepth int) ([]DirEntry, error) {
-	if err := ValidateSandboxPath(dirPath, PathModeRead); err != nil {
+	if err := ValidateSandboxPath(dirPath); err != nil {
 		return nil, err
 	}
 
@@ -448,8 +469,8 @@ func (sm *SessionManager) SyncSessionFiles(ctx context.Context, key string) erro
 		return fmt.Errorf("session manager: no sandbox for key %q", key)
 	}
 
-	// Sync from both output and workspace directories.
-	syncDirs := []string{"/sandbox/out/session", "/sandbox/session"}
+	// Sync everything from the single session directory.
+	syncDirs := []string{"/sandbox/session"}
 
 	for _, dir := range syncDirs {
 		files, err := sm.client.SearchFiles(ctx, ms.ExecDURL, dir, "**")

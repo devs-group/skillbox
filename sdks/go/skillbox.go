@@ -85,11 +85,6 @@ type RunRequest struct {
 	// written to /sandbox/out/session/ are preserved and re-mounted on the
 	// next execution in the same session.
 	SessionID string `json:"session_id,omitempty"`
-
-	// MountOnly skips command execution and only mounts skill files into the
-	// sandbox. Use this with cognitive skills where the agent drives execution
-	// via the sandbox shell API.
-	MountOnly bool `json:"mount_only,omitempty"`
 }
 
 // RunResult is the response returned after a skill execution completes.
@@ -942,6 +937,26 @@ func (c *Client) SandboxWriteFile(ctx context.Context, sessionID, path, content 
 	}{Path: path, Content: content, Append: appendFlag})
 
 	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/write-file", sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// MountSkillToSession uploads a skill's files directly into the session sandbox
+// at /sandbox/scripts/, without creating a throwaway execution sandbox.
+func (c *Client) MountSkillToSession(ctx context.Context, sessionID, skill, version string) error {
+	body, _ := json.Marshal(struct {
+		Skill   string `json:"skill"`
+		Version string `json:"version"`
+	}{Skill: skill, Version: version})
+
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/upload-skill", sessionID, strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}

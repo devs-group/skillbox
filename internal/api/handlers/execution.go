@@ -22,7 +22,6 @@ type createExecutionRequest struct {
 	Env        map[string]string `json:"env"`
 	InputFiles []string          `json:"input_files,omitempty"`
 	SessionID  string            `json:"session_id,omitempty"`
-	MountOnly  bool              `json:"mount_only,omitempty"`
 }
 
 // CreateExecution handles POST /v1/executions.
@@ -65,7 +64,6 @@ func CreateExecution(r *runner.Runner) gin.HandlerFunc {
 			Env:        req.Env,
 			InputFiles: req.InputFiles,
 			SessionID:  req.SessionID,
-			MountOnly:  req.MountOnly,
 			TenantID:   tenantID,
 		})
 		if err != nil {
