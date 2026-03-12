@@ -100,8 +100,12 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, tenantID, externalID 
 	sm.mu.Unlock()
 
 	// Coalesce concurrent creations for the same key.
+	// Use a detached context with a generous timeout so that sandbox
+	// creation is not cancelled by a short-lived HTTP request context.
 	val, err, _ := sm.createGroup.Do(key, func() (any, error) {
-		return sm.createSandbox(ctx, tenantID, externalID, key, opts)
+		createCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return sm.createSandbox(createCtx, tenantID, externalID, key, opts)
 	})
 	if err != nil {
 		return nil, err
@@ -145,7 +149,8 @@ func (sm *SessionManager) createSandbox(ctx context.Context, tenantID, externalI
 		cpu = sm.config.DefaultCPUStr()
 	}
 
-	// Create sandbox via OpenSandbox API.
+	// Create sandbox via OpenSandbox API. Entrypoint defaults to
+	// "sleep <timeout>" inside CreateSandbox.
 	sbResp, err := sm.client.CreateSandbox(ctx, SandboxOpts{
 		Image:   image,
 		Timeout: timeout,

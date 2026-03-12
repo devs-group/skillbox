@@ -127,7 +127,7 @@ func Load() (*Config, error) {
 	}
 
 	// Image allowlist
-	raw := envOrDefault("SKILLBOX_IMAGE_ALLOWLIST", "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5")
+	raw := envOrDefault("SKILLBOX_IMAGE_ALLOWLIST", "python:3.12,python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5")
 	for _, img := range strings.Split(raw, ",") {
 		img = strings.TrimSpace(img)
 		if img != "" {
@@ -213,7 +213,7 @@ func Load() (*Config, error) {
 	}
 
 	// Sandbox session image
-	cfg.SandboxSessionImage = envOrDefault("SKILLBOX_SANDBOX_SESSION_IMAGE", "python:3.12-slim")
+	cfg.SandboxSessionImage = envOrDefault("SKILLBOX_SANDBOX_SESSION_IMAGE", "python:3.12")
 
 	// Max session sandboxes
 	maxSessions, err := strconv.Atoi(envOrDefault("SKILLBOX_MAX_SESSION_SANDBOXES", "20"))

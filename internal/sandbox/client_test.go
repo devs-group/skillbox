@@ -776,6 +776,45 @@ func TestRunCommand_DataPrefixed(t *testing.T) {
 	}
 }
 
+func TestRunCommand_TextFieldFormat(t *testing.T) {
+	// ExecD uses "text" instead of "data" and "execution_time" instead of "durationMs".
+	sseBody := strings.Join([]string{
+		`{"type":"init","text":"abc123","timestamp":1000}`,
+		"",
+		`{"type":"stdout","text":"hello from execd\n","timestamp":1001}`,
+		"",
+		`{"type":"stderr","text":"debug info\n","timestamp":1002}`,
+		"",
+		`{"type":"execution_complete","execution_time":42,"timestamp":1003}`,
+		"",
+	}, "\n")
+
+	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseBody) //nolint:errcheck
+	}))
+	defer execd.Close() //nolint:errcheck
+
+	cl := New("http://unused", "key", execd.Client())
+
+	result, err := cl.RunCommand(context.Background(), execd.URL, "echo test", "/", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stdout != "hello from execd\n" {
+		t.Errorf("Stdout = %q, want %q", result.Stdout, "hello from execd\n")
+	}
+	if result.Stderr != "debug info\n" {
+		t.Errorf("Stderr = %q, want %q", result.Stderr, "debug info\n")
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
+	}
+	if result.Duration != 42*time.Millisecond {
+		t.Errorf("Duration = %v, want 42ms", result.Duration)
+	}
+}
+
 func TestRunCommand_ServerError(t *testing.T) {
 	execd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

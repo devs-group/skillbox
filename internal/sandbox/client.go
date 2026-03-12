@@ -9,9 +9,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"strconv"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -101,15 +101,31 @@ type CommandResult struct {
 }
 
 // CreateSandbox requests a new sandbox (HTTP 202, Pending state).
+// If no Entrypoint is provided, it defaults to "sleep <timeout>" so the
+// container stays alive for interactive use via ExecD and self-terminates
+// when the sandbox TTL expires. If no NetworkPolicy is provided, egress
+// is allowed so skills can reach external APIs.
 func (c *Client) CreateSandbox(ctx context.Context, opts SandboxOpts) (*SandboxResponse, error) {
+	entrypoint := opts.Entrypoint
+	if len(entrypoint) == 0 {
+		ttl := opts.Timeout
+		if ttl <= 0 {
+			ttl = 1800
+		}
+		entrypoint = []string{"sleep", strconv.Itoa(ttl)}
+	}
+	netPolicy := opts.NetworkPolicy
+	if netPolicy == nil {
+		netPolicy = &NetworkPolicy{DefaultAction: "allow"}
+	}
 	body := sandboxBody{
 		Image:      imageURI{URI: opts.Image},
 		Timeout:    opts.Timeout,
 		Resources:  opts.ResourceLimits,
-		Entrypoint: opts.Entrypoint,
+		Entrypoint: entrypoint,
 		Env:        opts.Env,
 		Metadata:   opts.Metadata,
-		NetPolicy:  opts.NetworkPolicy,
+		NetPolicy:  netPolicy,
 	}
 	var raw sandboxWire
 	if err := c.lcPost(ctx, "/sandboxes", body, http.StatusAccepted, &raw); err != nil {
@@ -427,17 +443,26 @@ func applySSE(raw string, result *CommandResult, stdout, stderr *strings.Builder
 	if json.Unmarshal([]byte(data), &ev) != nil {
 		return
 	}
+	// ExecD uses "text" while some versions use "data". Accept both.
+	payload := ev.Data
+	if payload == "" {
+		payload = ev.Text
+	}
 	switch ev.Type {
 	case "stdout":
-		stdout.WriteString(ev.Data)
+		stdout.WriteString(payload)
 	case "stderr":
-		stderr.WriteString(ev.Data)
+		stderr.WriteString(payload)
 	case "error":
-		result.Error = ev.Data
+		result.Error = payload
 	case "execution_complete":
 		result.ExitCode = ev.ExitCode
-		if ev.DurationMs > 0 {
-			result.Duration = time.Duration(ev.DurationMs) * time.Millisecond
+		dur := ev.DurationMs
+		if dur == 0 {
+			dur = ev.ExecutionTime
+		}
+		if dur > 0 {
+			result.Duration = time.Duration(dur) * time.Millisecond
 		}
 	}
 }
@@ -448,7 +473,7 @@ type sandboxBody struct {
 	Image      imageURI          `json:"image"`
 	Timeout    int               `json:"timeout"`
 	Resources  map[string]string `json:"resource_limits,omitempty"`
-	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Entrypoint []string          `json:"entrypoint"`
 	Env        map[string]string `json:"env,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	NetPolicy  *NetworkPolicy    `json:"network_policy,omitempty"`
@@ -494,10 +519,12 @@ type (
 		Timeout    int    `json:"timeout"`
 	}
 	sseEventWire struct {
-		Type       string `json:"type"`
-		Data       string `json:"data"`
-		ExitCode   int    `json:"exitCode"`
-		DurationMs int64  `json:"durationMs"`
+		Type          string `json:"type"`
+		Data          string `json:"data"`
+		Text          string `json:"text"`
+		ExitCode      int    `json:"exitCode"`
+		ExecutionTime int64  `json:"execution_time"`
+		DurationMs    int64  `json:"durationMs"`
 	}
 	fileInfoWire struct {
 		Path       string    `json:"path"`
