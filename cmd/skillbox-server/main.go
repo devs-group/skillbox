@@ -15,6 +15,7 @@ import (
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
 	"github.com/devs-group/skillbox/internal/sandbox"
+	"github.com/devs-group/skillbox/internal/scanner"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -76,11 +77,41 @@ func main() {
 	// Initialize session manager for sandbox shell API
 	sessMgr := sandbox.NewSessionManager(sbClient, db, collector, cfg)
 
+	// Initialize security scanner
+	var sc scanner.Scanner
+	var pipeline *scanner.Pipeline
+	if cfg.ScannerEnabled {
+		var llmCfg *scanner.LLMConfig
+		if cfg.ScannerLLMEnabled {
+			llmCfg = &scanner.LLMConfig{
+				APIKey:        cfg.ScannerLLMAPIKey,
+				Model:         cfg.ScannerLLMModel,
+				Timeout:       cfg.ScannerLLMTimeout,
+				MaxConcurrent: cfg.ScannerLLMMaxConcurrent,
+			}
+		}
+
+		var scannerErr error
+		pipeline, scannerErr = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, cfg.ScannerPatternsFile, cfg.ScannerOSSFFeedDir)
+		if scannerErr != nil {
+			slog.Error("failed to initialize security scanner", "error", scannerErr)
+			os.Exit(1)
+		}
+		sc = pipeline
+		slog.Info("security scanner enabled",
+			"timeout", cfg.ScannerTimeout,
+			"llm_enabled", cfg.ScannerLLMEnabled,
+		)
+	} else {
+		sc = &scanner.NoopScanner{}
+		slog.Warn("security scanner is DISABLED — uploads are not scanned")
+	}
+
 	// Initialize runner
 	r := runner.New(cfg, sbClient, reg, db, collector)
 
 	// Build router
-	router := api.NewRouter(cfg, db, r, reg, sessMgr, collector)
+	router := api.NewRouter(cfg, db, r, reg, sc, sessMgr, pipeline, collector)
 
 	// Create HTTP server
 	srv := &http.Server{

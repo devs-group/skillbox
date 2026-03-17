@@ -4,16 +4,20 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/devs-group/skillbox/internal/api/middleware"
 	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
+	"github.com/devs-group/skillbox/internal/scanner"
 	"github.com/devs-group/skillbox/internal/skill"
 	"github.com/devs-group/skillbox/internal/store"
 )
@@ -28,7 +32,7 @@ import (
 // then uploaded to the registry. Skill metadata is also persisted in
 // PostgreSQL so that list operations can return descriptions without
 // downloading every zip archive. Returns 201 with skill metadata on success.
-func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin.HandlerFunc {
+func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
@@ -103,6 +107,69 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config) gin
 			return
 		}
 
+		// Security scan: ZIP bomb check + tiered scanning.
+		zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", "failed to read zip for scanning: "+err.Error())
+			return
+		}
+
+		if err := scanner.CheckZIPSafety(zr); err != nil {
+			scanID := uuid.NewString()
+			slog.Warn("security scan: zip safety check failed",
+				"scan_id", scanID,
+				"skill_name", parsedSkill.Name,
+				"skill_version", parsedSkill.Version,
+				"tenant_id", tenantID,
+				"error", err,
+			)
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"upload rejected by security scan",
+				map[string]any{"scan_id": scanID, "categories": []string{"zip_bomb"}},
+			)
+			return
+		}
+
+		scanResult, err := sc.Scan(c.Request.Context(), zr, parsedSkill)
+		if err != nil {
+			// Infrastructure failure — fail closed.
+			slog.Error("security scan infrastructure failure",
+				"skill_name", parsedSkill.Name,
+				"tenant_id", tenantID,
+				"error", err,
+			)
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "security scan unavailable")
+			return
+		}
+
+		if !scanResult.Pass {
+			scanID := uuid.NewString()
+			categories := make([]string, 0)
+			seen := make(map[string]bool)
+			for _, f := range scanResult.Findings {
+				if !seen[f.Category] {
+					categories = append(categories, f.Category)
+					seen[f.Category] = true
+				}
+			}
+			slog.Warn("security scan blocked upload",
+				"scan_id", scanID,
+				"skill_name", parsedSkill.Name,
+				"skill_version", parsedSkill.Version,
+				"tenant_id", tenantID,
+				"categories", categories,
+				"tier", scanResult.Tier,
+				"duration_ms", scanResult.Duration.Milliseconds(),
+			)
+			// Return scan_id but not categories — detailed findings are logged
+			// server-side only. Exposing categories helps attackers craft evasion.
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"upload rejected by security scan",
+				map[string]any{"scan_id": scanID},
+			)
+			return
+		}
+
 		// Upload to registry (MinIO/S3).
 		err = reg.Upload(c.Request.Context(), tenantID, parsedSkill.Name, parsedSkill.Version, bytes.NewReader(zipData), int64(len(zipData)))
 		if err != nil {
@@ -148,6 +215,11 @@ func validateSkillZip(data []byte) (*skill.Skill, error) {
 		// Reject path traversal.
 		if strings.Contains(f.Name, "..") {
 			return nil, errors.New("zip contains path traversal entry: " + f.Name)
+		}
+
+		// Reject absolute paths.
+		if strings.HasPrefix(f.Name, "/") || strings.HasPrefix(f.Name, "\\") {
+			return nil, errors.New("zip contains absolute path entry: " + f.Name)
 		}
 
 		// Look for SKILL.md at the root of the archive.
@@ -293,6 +365,275 @@ func normalizeSkillZip(data []byte) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// ValidateSkill handles POST /v1/skills/validate.
+//
+// It performs the same security scanning as UploadSkill but does NOT store
+// the skill. This allows agents to pre-flight check skills before uploading.
+// Returns 200 with scan summary on pass, 422 on rejection.
+func ValidateSkill(cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var zipData []byte
+		var err error
+
+		contentType := c.ContentType()
+		switch {
+		case strings.HasPrefix(contentType, "application/zip"),
+			strings.HasPrefix(contentType, "application/octet-stream"):
+			limited := io.LimitReader(c.Request.Body, cfg.MaxSkillSize+1)
+			zipData, err = io.ReadAll(limited)
+			if err != nil {
+				response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read request body: "+err.Error())
+				return
+			}
+			if int64(len(zipData)) > cfg.MaxSkillSize {
+				response.RespondError(c, http.StatusRequestEntityTooLarge, "too_large",
+					"skill zip exceeds maximum allowed size")
+				return
+			}
+
+		case strings.HasPrefix(contentType, "multipart/form-data"):
+			file, _, ferr := c.Request.FormFile("file")
+			if ferr != nil {
+				response.RespondError(c, http.StatusBadRequest, "bad_request", "missing 'file' field in multipart form")
+				return
+			}
+			defer file.Close() //nolint:errcheck
+
+			limited := io.LimitReader(file, cfg.MaxSkillSize+1)
+			zipData, err = io.ReadAll(limited)
+			if err != nil {
+				response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read uploaded file: "+err.Error())
+				return
+			}
+			if int64(len(zipData)) > cfg.MaxSkillSize {
+				response.RespondError(c, http.StatusRequestEntityTooLarge, "too_large",
+					"skill zip exceeds maximum allowed size")
+				return
+			}
+
+		default:
+			response.RespondError(c, http.StatusUnsupportedMediaType, "unsupported_media_type",
+				"expected Content-Type application/zip or multipart/form-data")
+			return
+		}
+
+		if len(zipData) == 0 {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "empty zip data")
+			return
+		}
+
+		// Normalize the zip.
+		zipData, err = normalizeSkillZip(zipData)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		// Validate zip structure.
+		parsedSkill, err := validateSkillZip(zipData)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		if err := parsedSkill.Validate(); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", err.Error())
+			return
+		}
+
+		// ZIP bomb check.
+		zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_skill", "failed to read zip for scanning: "+err.Error())
+			return
+		}
+
+		if err := scanner.CheckZIPSafety(zr); err != nil {
+			scanID := uuid.NewString()
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"validation rejected by security scan",
+				map[string]any{"scan_id": scanID, "categories": []string{"zip_bomb"}},
+			)
+			return
+		}
+
+		// Run scanner pipeline.
+		scanResult, err := sc.Scan(c.Request.Context(), zr, parsedSkill)
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "security scan unavailable")
+			return
+		}
+
+		if !scanResult.Pass {
+			scanID := uuid.NewString()
+			// Log categories server-side only — don't expose to clients.
+			categories := make([]string, 0)
+			seen := make(map[string]bool)
+			for _, f := range scanResult.Findings {
+				if !seen[f.Category] {
+					categories = append(categories, f.Category)
+					seen[f.Category] = true
+				}
+			}
+			slog.Warn("security scan blocked validation",
+				"scan_id", scanID,
+				"skill_name", parsedSkill.Name,
+				"skill_version", parsedSkill.Version,
+				"categories", categories,
+				"tier", scanResult.Tier,
+			)
+			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
+				"validation rejected by security scan",
+				map[string]any{"scan_id": scanID},
+			)
+			return
+		}
+
+		// Passed — return scan summary (no storage).
+		c.JSON(http.StatusOK, gin.H{
+			"valid":        true,
+			"skill_name":   parsedSkill.Name,
+			"skill_version": parsedSkill.Version,
+			"scan_tier":    scanResult.Tier,
+			"duration_ms":  scanResult.Duration.Milliseconds(),
+		})
+	}
+}
+
+// ScannerStats handles GET /v1/admin/scanner/stats.
+// Returns current scanner metrics for monitoring dashboards.
+func ScannerStats(p *scanner.Pipeline) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil {
+			c.JSON(http.StatusOK, gin.H{"enabled": false})
+			return
+		}
+		snapshot := p.Metrics().Snapshot()
+		c.JSON(http.StatusOK, snapshot)
+	}
+}
+
+// ScannerGetPatterns handles GET /v1/admin/scanner/patterns.
+// Returns the currently active custom pattern definitions (user-uploaded overlay).
+func ScannerGetPatterns(p *scanner.Pipeline) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil {
+			c.JSON(http.StatusOK, gin.H{"enabled": false})
+			return
+		}
+		patterns := p.GetCustomPatterns()
+		if patterns == nil {
+			// No custom patterns — return empty structure.
+			c.JSON(http.StatusOK, &scanner.PatternFile{Version: 1})
+			return
+		}
+		c.JSON(http.StatusOK, patterns)
+	}
+}
+
+// ScannerSetPatterns handles PUT /v1/admin/scanner/patterns.
+// Accepts a JSON or YAML body with custom pattern definitions and
+// hot-reloads the scanner pipeline with the new patterns merged
+// on top of the embedded defaults.
+//
+// Send an empty body or {"version": 1} to clear all custom patterns.
+func ScannerSetPatterns(p *scanner.Pipeline) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil {
+			response.RespondError(c, http.StatusServiceUnavailable, "scanner_disabled", "security scanner is not enabled")
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20)) // 1MB max
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read request body: "+err.Error())
+			return
+		}
+
+		if len(body) == 0 {
+			// Clear custom patterns.
+			if err := p.SetCustomPatterns(nil); err != nil {
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to reload patterns: "+err.Error())
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "cleared", "message": "Custom patterns cleared, using defaults only"})
+			return
+		}
+
+		pf, err := scanner.ParsePatternData(body)
+		if err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_patterns", "failed to parse patterns: "+err.Error())
+			return
+		}
+
+		// Enforce limits to prevent DoS via excessive patterns.
+		const (
+			maxPatternsPerCategory = 100
+			maxRegexLength         = 1024
+			maxPackageListSize     = 500
+		)
+
+		type namedList struct {
+			name    string
+			entries []scanner.PatternEntry
+		}
+		for _, nl := range []namedList{
+			{"block_patterns", pf.BlockPatterns},
+			{"flag_patterns", pf.FlagPatterns},
+			{"common_block_patterns", pf.CommonBlockPatterns},
+			{"common_flag_patterns", pf.CommonFlagPatterns},
+		} {
+			if len(nl.entries) > maxPatternsPerCategory {
+				response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+					fmt.Sprintf("%s: %d patterns exceeds limit of %d", nl.name, len(nl.entries), maxPatternsPerCategory))
+				return
+			}
+			for i, e := range nl.entries {
+				if len(e.Regex) > maxRegexLength {
+					response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+						fmt.Sprintf("%s[%d]: regex length %d exceeds limit of %d", nl.name, i, len(e.Regex), maxRegexLength))
+					return
+				}
+			}
+		}
+		if len(pf.BlocklistPackages) > maxPackageListSize {
+			response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+				fmt.Sprintf("blocklist_packages: %d entries exceeds limit of %d", len(pf.BlocklistPackages), maxPackageListSize))
+			return
+		}
+		if len(pf.PopularPackages) > maxPackageListSize {
+			response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+				fmt.Sprintf("popular_packages: %d entries exceeds limit of %d", len(pf.PopularPackages), maxPackageListSize))
+			return
+		}
+
+		// Check if this is effectively empty (version-only, no actual patterns).
+		if len(pf.BlockPatterns) == 0 && len(pf.FlagPatterns) == 0 &&
+			len(pf.CommonBlockPatterns) == 0 && len(pf.CommonFlagPatterns) == 0 &&
+			len(pf.BlocklistPackages) == 0 && len(pf.PopularPackages) == 0 {
+			if err := p.SetCustomPatterns(nil); err != nil {
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to reload patterns: "+err.Error())
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "cleared", "message": "Custom patterns cleared, using defaults only"})
+			return
+		}
+
+		if err := p.SetCustomPatterns(pf); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "invalid_patterns", "failed to apply patterns: "+err.Error())
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":             "loaded",
+			"block_patterns":     len(pf.BlockPatterns),
+			"flag_patterns":      len(pf.FlagPatterns),
+			"blocklist_packages": len(pf.BlocklistPackages),
+			"popular_packages":   len(pf.PopularPackages),
+		})
+	}
 }
 
 // ListSkills handles GET /v1/skills.
