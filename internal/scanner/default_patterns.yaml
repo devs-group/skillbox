@@ -190,7 +190,10 @@ blocklist_packages:
   - shadowsock
   - smb
   - nodesass
-  - discord.js
+  - discordjs
+  - discord-js
+  - disc0rd.js
+  - discord.js-selfbot
 
 # Popular packages corpus for typosquatting detection (Levenshtein distance).
 popular_packages:

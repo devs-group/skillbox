@@ -62,6 +62,9 @@ type Config struct {
 	ScannerPatternsFile string // path to custom patterns YAML (merged on top of defaults)
 	ScannerOSSFFeedDir  string // path to directory of OSV JSON files from OSSF malicious packages feed
 
+	// Admin authentication
+	AdminToken string // static admin token for /v1/admin/* endpoints (env: SKILLBOX_ADMIN_TOKEN)
+
 	// Server
 	APIPort           string
 
@@ -279,6 +282,9 @@ func Load() (*Config, error) {
 	if cfg.ScannerLLMEnabled && cfg.ScannerLLMAPIKey == "" {
 		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_API_KEY is required when SKILLBOX_SCANNER_LLM_ENABLED=true")
 	}
+
+	// Admin token (required for /v1/admin/* endpoints).
+	cfg.AdminToken = get("SKILLBOX_ADMIN_TOKEN")
 
 	// Custom scanner patterns (optional).
 	cfg.ScannerPatternsFile = get("SKILLBOX_SCANNER_PATTERNS_FILE")

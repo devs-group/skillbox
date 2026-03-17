@@ -16,6 +16,7 @@ services:
       SKILLBOX_OPENSANDBOX_URL: "http://opensandbox:8080"
       SKILLBOX_OPENSANDBOX_API_KEY: "${OPENSANDBOX_API_KEY:-skillbox-dev-key}"
       SKILLBOX_LOG_LEVEL: "debug"
+      SKILLBOX_ADMIN_TOKEN: "${SKILLBOX_ADMIN_TOKEN:-dev-admin-token}"
       SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
       # External scanner (uncomment to enable ClamAV):
       # SKILLBOX_SCANNER_EXTERNAL_TYPE: "clamav"

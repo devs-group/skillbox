@@ -50,10 +50,14 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		v1.GET("/skills/:name/:version/files", handlers.GetSkillFiles(reg, s))
 		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
 
-		// Scanner admin endpoints
-		v1.GET("/admin/scanner/stats", handlers.ScannerStats(pipeline))
-		v1.GET("/admin/scanner/patterns", handlers.ScannerGetPatterns(pipeline))
-		v1.PUT("/admin/scanner/patterns", handlers.ScannerSetPatterns(pipeline))
+		// Scanner admin endpoints — require admin token in addition to API key.
+		admin := v1.Group("/admin")
+		admin.Use(middleware.AdminMiddleware(cfg.AdminToken))
+		{
+			admin.GET("/scanner/stats", handlers.ScannerStats(pipeline))
+			admin.GET("/scanner/patterns", handlers.ScannerGetPatterns(pipeline))
+			admin.PUT("/scanner/patterns", handlers.ScannerSetPatterns(pipeline))
+		}
 
 		// File/artifact endpoints
 		if len(col) > 0 && col[0] != nil {
