@@ -114,10 +114,6 @@ func (c *Client) CreateSandbox(ctx context.Context, opts SandboxOpts) (*SandboxR
 		}
 		entrypoint = []string{"sleep", strconv.Itoa(ttl)}
 	}
-	netPolicy := opts.NetworkPolicy
-	if netPolicy == nil {
-		netPolicy = &NetworkPolicy{DefaultAction: "allow"}
-	}
 	body := sandboxBody{
 		Image:      imageURI{URI: opts.Image},
 		Timeout:    opts.Timeout,
@@ -125,7 +121,7 @@ func (c *Client) CreateSandbox(ctx context.Context, opts SandboxOpts) (*SandboxR
 		Entrypoint: entrypoint,
 		Env:        opts.Env,
 		Metadata:   opts.Metadata,
-		NetPolicy:  netPolicy,
+		NetPolicy:  opts.NetworkPolicy,
 	}
 	var raw sandboxWire
 	if err := c.lcPost(ctx, "/sandboxes", body, http.StatusAccepted, &raw); err != nil {
