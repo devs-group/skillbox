@@ -52,6 +52,11 @@ func CheckZIPSafety(zr *zip.Reader) error {
 			return fmt.Errorf("zip contains path traversal entry: %s", f.Name)
 		}
 
+		// Reject absolute paths.
+		if strings.HasPrefix(f.Name, "/") || strings.HasPrefix(f.Name, "\\") {
+			return fmt.Errorf("zip contains absolute path entry: %s", f.Name)
+		}
+
 		// Reject symlinks.
 		if f.FileInfo().Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("zip contains symlink entry: %s", f.Name)

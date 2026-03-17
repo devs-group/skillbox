@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -160,9 +161,11 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 				"tier", scanResult.Tier,
 				"duration_ms", scanResult.Duration.Milliseconds(),
 			)
+			// Return scan_id but not categories — detailed findings are logged
+			// server-side only. Exposing categories helps attackers craft evasion.
 			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
 				"upload rejected by security scan",
-				map[string]any{"scan_id": scanID, "categories": categories},
+				map[string]any{"scan_id": scanID},
 			)
 			return
 		}
@@ -212,6 +215,11 @@ func validateSkillZip(data []byte) (*skill.Skill, error) {
 		// Reject path traversal.
 		if strings.Contains(f.Name, "..") {
 			return nil, errors.New("zip contains path traversal entry: " + f.Name)
+		}
+
+		// Reject absolute paths.
+		if strings.HasPrefix(f.Name, "/") || strings.HasPrefix(f.Name, "\\") {
+			return nil, errors.New("zip contains absolute path entry: " + f.Name)
 		}
 
 		// Look for SKILL.md at the root of the archive.
@@ -460,6 +468,7 @@ func ValidateSkill(cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
 
 		if !scanResult.Pass {
 			scanID := uuid.NewString()
+			// Log categories server-side only — don't expose to clients.
 			categories := make([]string, 0)
 			seen := make(map[string]bool)
 			for _, f := range scanResult.Findings {
@@ -468,9 +477,16 @@ func ValidateSkill(cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
 					seen[f.Category] = true
 				}
 			}
+			slog.Warn("security scan blocked validation",
+				"scan_id", scanID,
+				"skill_name", parsedSkill.Name,
+				"skill_version", parsedSkill.Version,
+				"categories", categories,
+				"tier", scanResult.Tier,
+			)
 			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
 				"validation rejected by security scan",
-				map[string]any{"scan_id": scanID, "categories": categories},
+				map[string]any{"scan_id": scanID},
 			)
 			return
 		}
@@ -549,6 +565,47 @@ func ScannerSetPatterns(p *scanner.Pipeline) gin.HandlerFunc {
 		pf, err := scanner.ParsePatternData(body)
 		if err != nil {
 			response.RespondError(c, http.StatusBadRequest, "invalid_patterns", "failed to parse patterns: "+err.Error())
+			return
+		}
+
+		// Enforce limits to prevent DoS via excessive patterns.
+		const (
+			maxPatternsPerCategory = 100
+			maxRegexLength         = 1024
+			maxPackageListSize     = 500
+		)
+
+		type namedList struct {
+			name    string
+			entries []scanner.PatternEntry
+		}
+		for _, nl := range []namedList{
+			{"block_patterns", pf.BlockPatterns},
+			{"flag_patterns", pf.FlagPatterns},
+			{"common_block_patterns", pf.CommonBlockPatterns},
+			{"common_flag_patterns", pf.CommonFlagPatterns},
+		} {
+			if len(nl.entries) > maxPatternsPerCategory {
+				response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+					fmt.Sprintf("%s: %d patterns exceeds limit of %d", nl.name, len(nl.entries), maxPatternsPerCategory))
+				return
+			}
+			for i, e := range nl.entries {
+				if len(e.Regex) > maxRegexLength {
+					response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+						fmt.Sprintf("%s[%d]: regex length %d exceeds limit of %d", nl.name, i, len(e.Regex), maxRegexLength))
+					return
+				}
+			}
+		}
+		if len(pf.BlocklistPackages) > maxPackageListSize {
+			response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+				fmt.Sprintf("blocklist_packages: %d entries exceeds limit of %d", len(pf.BlocklistPackages), maxPackageListSize))
+			return
+		}
+		if len(pf.PopularPackages) > maxPackageListSize {
+			response.RespondError(c, http.StatusBadRequest, "limit_exceeded",
+				fmt.Sprintf("popular_packages: %d entries exceeds limit of %d", len(pf.PopularPackages), maxPackageListSize))
 			return
 		}
 

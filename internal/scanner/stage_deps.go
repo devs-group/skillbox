@@ -52,21 +52,21 @@ func (ds *depsStage) run(ctx context.Context, zr *zip.Reader, _ []Finding) ([]Fi
 		case name == "requirements.txt" || strings.HasSuffix(name, "/requirements.txt"):
 			content, err := readZipFileContent(f)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("%s: read %s: %w", stageNameDeps, f.Name, err)
 			}
 			findings = append(findings, ds.checkRequirementsTyposquat(string(content), f.Name)...)
 
 		case name == "pyproject.toml" || strings.HasSuffix(name, "/pyproject.toml"):
 			content, err := readZipFileContent(f)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("%s: read %s: %w", stageNameDeps, f.Name, err)
 			}
 			findings = append(findings, ds.checkPyprojectToml(string(content), f.Name)...)
 
 		case name == "package.json" || strings.HasSuffix(name, "/package.json"):
 			content, err := readZipFileContent(f)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("%s: read %s: %w", stageNameDeps, f.Name, err)
 			}
 			findings = append(findings, ds.checkPackageJSONHooks(string(content), f.Name)...)
 			findings = append(findings, ds.checkPackageJSONTyposquat(string(content), f.Name)...)

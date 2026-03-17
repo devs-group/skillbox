@@ -266,7 +266,13 @@ func (ls *llmStage) callAPI(ctx context.Context, systemPrompt, userMessage strin
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+		// Truncate response body to avoid leaking sensitive data (e.g., API keys
+		// echoed in error responses) into logs.
+		body := string(respBody)
+		if len(body) > 200 {
+			body = body[:200] + "...(truncated)"
+		}
+		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, body)
 	}
 
 	var apiResp anthropicResponse

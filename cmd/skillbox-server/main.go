@@ -91,7 +91,12 @@ func main() {
 			}
 		}
 
-		pipeline = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, cfg.ScannerPatternsFile, cfg.ScannerOSSFFeedDir)
+		var scannerErr error
+		pipeline, scannerErr = scanner.New(cfg.ScannerTimeout, slog.Default(), llmCfg, cfg.ScannerPatternsFile, cfg.ScannerOSSFFeedDir)
+		if scannerErr != nil {
+			slog.Error("failed to initialize security scanner", "error", scannerErr)
+			os.Exit(1)
+		}
 		sc = pipeline
 		slog.Info("security scanner enabled",
 			"timeout", cfg.ScannerTimeout,

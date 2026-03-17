@@ -55,14 +55,9 @@ func (ps *patternStage) run(ctx context.Context, zr *zip.Reader, _ []Finding) ([
 			continue
 		}
 
-		// Skip files exceeding size cap.
-		if f.UncompressedSize64 > uint64(maxFileSizeForScan) {
-			ps.logger.Debug("skipping large file for pattern scan",
-				"file", f.Name,
-				"size", f.UncompressedSize64,
-			)
-			continue
-		}
+		// For files exceeding size cap, scan the first 1MB instead of skipping.
+		// This prevents evasion by padding malicious files beyond the size limit.
+		oversized := f.UncompressedSize64 > uint64(maxFileSizeForScan)
 
 		// Read file content.
 		content, err := readZipFileContent(f)
@@ -76,6 +71,17 @@ func (ps *patternStage) run(ctx context.Context, zr *zip.Reader, _ []Finding) ([
 		}
 
 		text := string(content)
+
+		// Emit a flag for oversized files so deeper tiers can scrutinize them.
+		if oversized {
+			findings = append(findings, Finding{
+				Stage:       stageNamePatterns,
+				Severity:    SeverityFlag,
+				Category:    "oversized_file",
+				FilePath:    f.Name,
+				Description: fmt.Sprintf("file exceeds %d bytes (actual: %d), only first %d bytes scanned", maxFileSizeForScan, f.UncompressedSize64, len(content)),
+			})
+		}
 
 		// Check block patterns.
 		for _, p := range ps.blockPatterns {

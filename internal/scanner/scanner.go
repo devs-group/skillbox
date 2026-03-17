@@ -48,9 +48,14 @@ type Pipeline struct {
 // New creates a new scanner Pipeline configured for Tier 1 and Tier 2 scanning.
 // If llmCfg is non-nil, Tier 3 LLM analysis is enabled.
 // customPatternsFile and ossfFeedDir are optional paths for custom pattern sources.
-func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, customPatternsFile, ossfFeedDir string) *Pipeline {
+func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, customPatternsFile, ossfFeedDir string) (*Pipeline, error) {
 	lp, err := loadPatterns(customPatternsFile, ossfFeedDir, logger)
 	if err != nil {
+		if customPatternsFile != "" {
+			// Fail-closed: if a custom patterns file was explicitly configured
+			// but cannot be loaded, refuse to start with degraded security.
+			return nil, fmt.Errorf("load custom patterns file %q: %w", customPatternsFile, err)
+		}
 		logger.Warn("failed to load external patterns, using embedded defaults", "error", err)
 		// Fall back to embedded defaults with no custom overlay.
 		lp, _ = loadPatterns("", "", logger)
@@ -76,7 +81,7 @@ func New(timeout time.Duration, logger *slog.Logger, llmCfg *LLMConfig, customPa
 		logger.Info("scanner LLM analysis enabled", "model", llmCfg.Model)
 	}
 
-	return p
+	return p, nil
 }
 
 // Metrics returns the scanner's metrics tracker.
