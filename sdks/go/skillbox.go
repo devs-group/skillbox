@@ -400,6 +400,51 @@ func (c *Client) RegisterSkill(ctx context.Context, zipPath string) error {
 	return nil
 }
 
+// CreateFromFieldsRequest describes a skill to create from structured fields
+// rather than a pre-built zip archive. The server generates SKILL.md and
+// packages the zip internally. Upsert semantics: if the skill already exists,
+// it is replaced.
+type CreateFromFieldsRequest struct {
+	// Name is the skill identifier (kebab-case, alphanumeric + hyphens).
+	Name string `json:"name"`
+
+	// Description is a short summary of what the skill does.
+	Description string `json:"description"`
+
+	// Lang is the runtime language: "python" (default), "node", or "bash".
+	Lang string `json:"lang,omitempty"`
+
+	// Code is the entrypoint script content.
+	Code string `json:"code"`
+
+	// Instructions is the SKILL.md body text placed after the frontmatter.
+	Instructions string `json:"instructions,omitempty"`
+
+	// Version is the semver string. Defaults to "1.0.0" if empty.
+	Version string `json:"version,omitempty"`
+}
+
+// UpsertSkillFromFields creates or replaces a skill from structured fields.
+// The server builds the SKILL.md and zip archive internally.
+func (c *Client) UpsertSkillFromFields(ctx context.Context, req CreateFromFieldsRequest) (*Skill, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: marshal create request: %w", err)
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/skills/from-fields", strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var skill Skill
+	if err := c.decodeResponse(resp, &skill); err != nil {
+		return nil, err
+	}
+	return &skill, nil
+}
+
 // ListSkills returns all skills registered on the server. The response
 // includes descriptions so callers can decide which skill to use.
 func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {

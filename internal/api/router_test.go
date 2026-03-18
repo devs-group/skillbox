@@ -1358,3 +1358,50 @@ func TestRouter_AuthScenarios(t *testing.T) {
 		})
 	}
 }
+
+// TestRoute_SkillsFromFields_DoesNotConflict verifies that POST /v1/skills/from-fields
+// is routed correctly and does not collide with POST /v1/skills (zip upload)
+// or GET /v1/skills/:name/:version.
+func TestRoute_SkillsFromFields_DoesNotConflict(t *testing.T) {
+	router, mock, cleanup := setupRouter(t)
+	defer cleanup()
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantStatus int // We expect the route to exist (not 404)
+	}{
+		{
+			name:       "from-fields route exists",
+			method:     http.MethodPost,
+			path:       "/v1/skills/from-fields",
+			wantStatus: http.StatusBadRequest, // No body → validation error, but NOT 404
+		},
+		{
+			name:       "zip upload route still exists",
+			method:     http.MethodPost,
+			path:       "/v1/skills",
+			wantStatus: http.StatusUnsupportedMediaType, // No content-type → 415, but NOT 404
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectAuthLookup(mock, testToken)
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("Authorization", "Bearer "+testToken)
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			if w.Code == http.StatusNotFound {
+				t.Errorf("%s %s returned 404 — route not registered", tt.method, tt.path)
+			}
+			if w.Code != tt.wantStatus {
+				t.Errorf("%s %s status = %d, want %d; body: %s", tt.method, tt.path, w.Code, tt.wantStatus, w.Body.String())
+			}
+		})
+	}
+}

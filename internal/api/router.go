@@ -43,6 +43,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 
 		// Skill management endpoints
 		v1.POST("/skills", handlers.UploadSkill(reg, s, cfg))
+		v1.POST("/skills/from-fields", handlers.CreateFromFields(reg, s, cfg))
 		v1.GET("/skills", handlers.ListSkills(s, reg))
 		v1.GET("/skills/:name/:version", handlers.GetSkill(reg, s))
 		v1.GET("/skills/:name/:version/files", handlers.GetSkillFiles(reg, s))
