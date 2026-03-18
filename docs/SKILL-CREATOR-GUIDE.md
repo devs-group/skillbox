@@ -65,7 +65,39 @@ code-reviewer/
 
 ## Step 1: Store Prompt Skills via the Skillbox API
 
-Package and upload the skill the same way you would an executable skill:
+**Option A: Structured fields (recommended)**
+
+Use `POST /v1/skills/from-fields` to create skills from JSON — no zip packaging needed:
+
+```bash
+curl -X POST http://localhost:8080/v1/skills/from-fields \
+  -H "Authorization: Bearer $SKILLBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "code-reviewer",
+    "version": "1.0.0",
+    "description": "Review code changes for correctness, security, and style",
+    "instructions": "You are a senior code reviewer..."
+  }'
+```
+
+Or with the Go SDK:
+
+```go
+client := skillbox.New("http://localhost:8080", "sk-your-key")
+result, err := client.UpsertSkillFromFields(ctx, skillbox.CreateFromFieldsRequest{
+    Name:        "code-reviewer",
+    Version:     "1.0.0",
+    Description: "Review code changes for correctness, security, and style",
+    Instructions: "You are a senior code reviewer...",
+})
+```
+
+Upsert semantics: calling again with the same name replaces the skill.
+
+**Option B: Zip upload**
+
+Package and upload the skill as a zip archive (useful for multi-file skills):
 
 ```bash
 # Package
@@ -186,8 +218,7 @@ Skill is live in the catalog
 ### Example: API-driven creator
 
 ```python
-import io
-import zipfile
+import requests
 
 def create_prompt_skill(
     name: str,
@@ -195,26 +226,29 @@ def create_prompt_skill(
     description: str,
     instructions: str,
 ) -> dict:
-    """Create a prompt skill and upload it to Skillbox."""
+    """Create a prompt skill via the structured fields API."""
 
-    # Build SKILL.md content
-    skill_md = f"""---
-name: {name}
-version: "{version}"
-description: {description}
----
+    return requests.post(
+        f"{SKILLBOX_URL}/v1/skills/from-fields",
+        headers={"Authorization": f"Bearer {SKILLBOX_API_KEY}"},
+        json={
+            "name": name,
+            "version": version,
+            "description": description,
+            "instructions": instructions,
+        },
+    ).json()
+```
 
-{instructions}
-"""
+Or with the Go SDK:
 
-    # Package as zip in memory
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("SKILL.md", skill_md)
-    buf.seek(0)
-
-    # Upload to Skillbox
-    return skillbox.upload_skill_zip(buf)
+```go
+result, err := client.UpsertSkillFromFields(ctx, skillbox.CreateFromFieldsRequest{
+    Name:         name,
+    Description:  description,
+    Instructions: instructions,
+    Version:      version,
+})
 ```
 
 ### Example: LLM-assisted creator
@@ -297,7 +331,8 @@ Author                     Skillbox                  Application (runtime)
   │  2. Test locally ─────────┼───────────────────────────┤ LLM call
   │     (iterate)             │                           │
   │                           │                           │
-  │  3. Package + upload ─────┤ POST /v1/skills           │
+  │  3. Publish ─────────────┤ POST /v1/skills/from-fields │
+  │     (or zip upload)      │  (or POST /v1/skills)      │
   │                           │  → store zip in MinIO     │
   │                           │  → index in Postgres      │
   │                           │                           │

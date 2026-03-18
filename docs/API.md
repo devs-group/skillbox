@@ -156,6 +156,56 @@ Send the raw zip data in the request body. The zip must contain a valid SKILL.md
 }
 ```
 
+#### POST /v1/skills/from-fields
+
+Create or replace a skill from structured JSON fields. The server generates SKILL.md and packages the zip archive internally — no client-side zip building required. Upsert semantics: if the skill already exists for this tenant, it is replaced.
+
+**Request**:
+```json
+{
+  "name": "data-analysis",
+  "description": "Analyze CSV data and produce summary statistics",
+  "lang": "python",
+  "code": "import json, os\n\ndata = json.loads(os.environ['SANDBOX_INPUT'])\nprint(json.dumps({'rows': len(data)}))",
+  "instructions": "This skill analyzes tabular data.\n\n## Usage\nPass a JSON array as input.",
+  "version": "1.0.0"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Skill identifier. Alphanumeric, hyphens, underscores, dots. Must start with alphanumeric. Max 128 chars. |
+| `description` | string | Yes | Short summary of what the skill does |
+| `code` | string | Yes | Entrypoint script content |
+| `lang` | string | No | Runtime language: `python` (default), `node`, or `bash` |
+| `instructions` | string | No | SKILL.md body text placed after frontmatter. Appears in skill metadata for LLM consumption. |
+| `version` | string | No | Semver string. Defaults to `1.0.0` |
+
+**Response**: `201 Created`
+```json
+{
+  "name": "data-analysis",
+  "version": "1.0.0",
+  "description": "Analyze CSV data and produce summary statistics",
+  "lang": "python",
+  "mode": "executable"
+}
+```
+
+**Errors**:
+- `400 bad_request` — Missing required fields, invalid name (path traversal, special chars), invalid version
+- `413 too_large` — Packaged skill exceeds size limit
+
+**Go SDK**:
+```go
+result, err := client.UpsertSkillFromFields(ctx, skillbox.CreateFromFieldsRequest{
+    Name:        "data-analysis",
+    Description: "Analyze CSV data",
+    Code:        "import json\nprint(json.dumps({'ok': True}))",
+    Lang:        "python",
+})
+```
+
 #### GET /v1/skills
 
 List all skills available to the calling tenant.

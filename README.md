@@ -155,6 +155,15 @@ client := skillbox.New("http://localhost:8080", "sk-your-key",
     skillbox.WithTenant("my-team"),
 )
 
+// Create a skill from structured fields (no zip packaging needed)
+skill, err := client.UpsertSkillFromFields(ctx, skillbox.CreateFromFieldsRequest{
+    Name:        "text-summary",
+    Description: "Summarize long text into key sentences",
+    Lang:        "python",
+    Code:        "import json, os\ndata = json.loads(os.environ['SANDBOX_INPUT'])\nprint(json.dumps({'summary': data['text'][:100]}))",
+})
+
+// Run a skill
 result, err := client.Run(ctx, skillbox.RunRequest{
     Skill:   "text-summary",
     Input:   json.RawMessage(`{"text": "Long text here...", "max_sentences": 3}`),
