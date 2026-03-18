@@ -38,7 +38,8 @@ config:
   maxTimeout: "10m"
   defaultMemory: "256Mi"
   defaultCPU: "0.5"
-  imageAllowlist: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
+  sandboxSessionImage: "ghcr.io/devs-group/skillbox-sandbox:latest"
+  imageAllowlist: "ghcr.io/devs-group/skillbox-sandbox:latest,python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
 
 # -- API container resources
 resources:

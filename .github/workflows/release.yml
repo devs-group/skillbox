@@ -40,7 +40,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
+      - name: Build and push server
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -49,3 +49,12 @@ jobs:
           tags: |
             ghcr.io/devs-group/skillbox:${{ github.ref_name }}
             ghcr.io/devs-group/skillbox:latest
+      - name: Build and push sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.sandbox
+          push: true
+          tags: |
+            ghcr.io/devs-group/skillbox-sandbox:${{ github.ref_name }}
+            ghcr.io/devs-group/skillbox-sandbox:latest

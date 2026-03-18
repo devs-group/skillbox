@@ -221,17 +221,6 @@ func (sm *SessionManager) createSandbox(ctx context.Context, tenantID, externalI
 		)
 	}
 
-	// Install uv (fast Python package manager) if using a Python image.
-	if strings.HasPrefix(image, "python:") {
-		result, err := sm.client.RunCommand(ctx, execdURL, "pip install --no-cache-dir uv", "/", 120)
-		if err != nil || result.ExitCode != 0 {
-			slog.Warn("session manager: failed to install uv",
-				"sandbox_id", sbResp.ID,
-				"error", err,
-			)
-		}
-	}
-
 	// Mount existing session files from MinIO into the sandbox.
 	if err := sm.mountSessionFiles(ctx, tenantID, sess.ID, execdURL); err != nil {
 		slog.Warn("session manager: failed to mount session files",
