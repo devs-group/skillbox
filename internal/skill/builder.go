@@ -31,12 +31,12 @@ func BuildSkillMD(name, description, lang, version, instructions string) string 
 
 	var sb strings.Builder
 	sb.WriteString("---\n")
-	sb.WriteString(fmt.Sprintf("name: %q\n", name))
-	sb.WriteString(fmt.Sprintf("description: %q\n", description))
+	fmt.Fprintf(&sb, "name: %q\n", name)
+	fmt.Fprintf(&sb, "description: %q\n", description)
 	if lang != "" {
-		sb.WriteString(fmt.Sprintf("lang: %q\n", lang))
+		fmt.Fprintf(&sb, "lang: %q\n", lang)
 	}
-	sb.WriteString(fmt.Sprintf("version: %q\n", version))
+	fmt.Fprintf(&sb, "version: %q\n", version)
 	sb.WriteString("---\n\n")
 	if instructions != "" {
 		sb.WriteString(instructions)

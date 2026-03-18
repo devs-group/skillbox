@@ -139,7 +139,7 @@ func TestE2E_CreateFromFields_SDK_To_Handler(t *testing.T) {
 func assertAPIErrorStatus(t *testing.T, err error, wantStatus int) {
 	t.Helper()
 	msg := err.Error()
-	wantStr := strings.Replace(http.StatusText(wantStatus), " ", "", -1)
+	wantStr := strings.ReplaceAll(http.StatusText(wantStatus), " ", "")
 	statusStr := ""
 	switch wantStatus {
 	case 400:

@@ -291,8 +291,8 @@ func TestPackageSkillZip_PreservesCodeExactly(t *testing.T) {
 		if f.Name == "main.py" {
 			rc, _ := f.Open()
 			buf := new(bytes.Buffer)
-			buf.ReadFrom(rc)
-			rc.Close()
+			_, _ = buf.ReadFrom(rc)
+			_ = rc.Close()
 			if buf.String() != code {
 				t.Errorf("code mismatch:\ngot:  %q\nwant: %q", buf.String(), code)
 			}
@@ -325,8 +325,8 @@ func TestPackageSkillZip_FullRoundTrip(t *testing.T) {
 				t.Fatalf("open SKILL.md: %v", err)
 			}
 			buf := new(bytes.Buffer)
-			buf.ReadFrom(rc)
-			rc.Close()
+			_, _ = buf.ReadFrom(rc)
+			_ = rc.Close()
 
 			parsed, err := ParseSkillMD(buf.Bytes())
 			if err != nil {

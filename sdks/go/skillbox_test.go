@@ -1240,7 +1240,7 @@ func TestUpsertSkillFromFields_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(Skill{
+		_ = json.NewEncoder(w).Encode(Skill{
 			Name:        gotBody.Name,
 			Version:     "1.0.0",
 			Description: gotBody.Description,
@@ -1293,7 +1293,7 @@ func TestUpsertSkillFromFields_Success(t *testing.T) {
 func TestUpsertSkillFromFields_ValidationError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(APIError{
+		_ = json.NewEncoder(w).Encode(APIError{
 			ErrorCode: "bad_request",
 			Message:   "name is required",
 		})
@@ -1323,7 +1323,7 @@ func TestUpsertSkillFromFields_ValidationError(t *testing.T) {
 func TestUpsertSkillFromFields_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(APIError{
+		_ = json.NewEncoder(w).Encode(APIError{
 			ErrorCode: "internal_error",
 			Message:   "database unavailable",
 		})
