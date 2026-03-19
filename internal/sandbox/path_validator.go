@@ -2,13 +2,19 @@ package sandbox
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
 // ValidateSandboxPath validates that a path is safe for sandbox operations.
-// All paths must be absolute, start with /sandbox/session/, and contain no "..".
+// Cleans the path first to normalize traversal sequences, then verifies
+// it starts with /sandbox/session/ and contains no "..".
 func ValidateSandboxPath(p string) error {
-	if p == "" || !strings.HasPrefix(p, "/sandbox/session") || strings.Contains(p, "..") {
+	if p == "" {
+		return fmt.Errorf("invalid sandbox path: path is empty")
+	}
+	cleaned := filepath.Clean(p)
+	if !strings.HasPrefix(cleaned, "/sandbox/session") || strings.Contains(cleaned, "..") {
 		return fmt.Errorf("invalid sandbox path: must start with /sandbox/session and not contain '..': %q", p)
 	}
 	return nil

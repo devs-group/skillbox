@@ -248,7 +248,8 @@ func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.Raw
 	}
 
 	for _, fp := range a.Filepaths {
-		if !strings.HasPrefix(fp, "/sandbox/session/outputs/") {
+		cleaned := filepath.Clean(fp)
+		if !strings.HasPrefix(cleaned, "/sandbox/session/outputs/") || strings.Contains(cleaned, "..") {
 			return fmt.Sprintf("file %s is not in /sandbox/session/outputs/", fp), nil, nil
 		}
 	}
@@ -292,7 +293,11 @@ func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.Raw
 // --------------------------------------------------------------------
 
 func validateSandboxPath(p string) error {
-	if p == "" || !strings.HasPrefix(p, "/sandbox/session") || strings.Contains(p, "..") {
+	if p == "" {
+		return fmt.Errorf("invalid path: path is empty")
+	}
+	cleaned := filepath.Clean(p)
+	if !strings.HasPrefix(cleaned, "/sandbox/session") || strings.Contains(cleaned, "..") {
 		return fmt.Errorf("invalid path: must start with /sandbox/session and not contain '..': %s", p)
 	}
 	return nil
