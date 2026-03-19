@@ -203,6 +203,14 @@ type SandboxDirEntry struct {
 	Size  int64  `json:"size"`
 }
 
+// ToolDefinition is an LLM-compatible tool schema. Parameters uses
+// map[string]any to match the convention in most Go LLM libraries.
+type ToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
 // Option configures a [Client]. Pass options to [New].
 type Option func(*Client)
 
