@@ -306,45 +306,40 @@ func (sm *SessionManager) mountSessionFiles(ctx context.Context, tenantID, sessi
 }
 
 // Execute runs a command in the managed sandbox identified by key.
+// If the sandbox is unreachable, evicts it so GetOrCreate recreates on next call.
 func (sm *SessionManager) Execute(ctx context.Context, key string, command, workdir string, timeout int) (*CommandResult, error) {
-	sm.mu.Lock()
-	ms, ok := sm.sessions[key]
-	if ok {
-		ms.LastUsedAt = time.Now()
-	}
-	sm.mu.Unlock()
-
-	if !ok {
-		return nil, fmt.Errorf("session manager: no sandbox for key %q", key)
+	ms, err := sm.getSession(key)
+	if err != nil {
+		return nil, err
 	}
 
 	result, err := sm.client.RunCommand(ctx, ms.ExecDURL, command, workdir, timeout)
 	if err != nil {
+		if isConnectionError(err) {
+			sm.evictStale(key, ms.SandboxID, err)
+		}
 		return nil, fmt.Errorf("session manager: execute: %w", err)
 	}
 	return result, nil
 }
 
 // ReadFile downloads a file from the managed sandbox, validating the path
-// for read access.
+// for read access. Evicts the sandbox on connection errors.
 func (sm *SessionManager) ReadFile(ctx context.Context, key string, filePath string) ([]byte, error) {
 	if err := ValidateSandboxPath(filePath); err != nil {
 		return nil, err
 	}
 
-	sm.mu.Lock()
-	ms, ok := sm.sessions[key]
-	if ok {
-		ms.LastUsedAt = time.Now()
-	}
-	sm.mu.Unlock()
-
-	if !ok {
-		return nil, fmt.Errorf("session manager: no sandbox for key %q", key)
+	ms, err := sm.getSession(key)
+	if err != nil {
+		return nil, err
 	}
 
 	rc, err := sm.client.DownloadFile(ctx, ms.ExecDURL, filePath)
 	if err != nil {
+		if isConnectionError(err) {
+			sm.evictStale(key, ms.SandboxID, err)
+		}
 		return nil, fmt.Errorf("session manager: read file: %w", err)
 	}
 	defer rc.Close() //nolint:errcheck
@@ -357,70 +352,62 @@ func (sm *SessionManager) ReadFile(ctx context.Context, key string, filePath str
 }
 
 // WriteFile uploads a file to the managed sandbox, validating the path
-// for write access.
+// for write access. Evicts the sandbox on connection errors.
 func (sm *SessionManager) WriteFile(ctx context.Context, key string, filePath, content string) error {
 	if err := ValidateSandboxPath(filePath); err != nil {
 		return err
 	}
 
-	sm.mu.Lock()
-	ms, ok := sm.sessions[key]
-	if ok {
-		ms.LastUsedAt = time.Now()
-	}
-	sm.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("session manager: no sandbox for key %q", key)
+	ms, err := sm.getSession(key)
+	if err != nil {
+		return err
 	}
 
-	return sm.client.UploadFiles(ctx, ms.ExecDURL, []FileUpload{
-		{
-			Path:    filePath,
-			Content: []byte(content),
-			Mode:    0o644,
-		},
-	})
+	if uploadErr := sm.client.UploadFiles(ctx, ms.ExecDURL, []FileUpload{
+		{Path: filePath, Content: []byte(content), Mode: 0o644},
+	}); uploadErr != nil {
+		if isConnectionError(uploadErr) {
+			sm.evictStale(key, ms.SandboxID, uploadErr)
+		}
+		return uploadErr
+	}
+	return nil
 }
 
 // UploadFiles uploads multiple files to the managed sandbox in a single
 // multipart request. Unlike WriteFile, this skips path validation so that
 // internal callers (e.g. skill mounting) can write to /sandbox/scripts/.
+// Evicts the sandbox on connection errors.
 func (sm *SessionManager) UploadFiles(ctx context.Context, key string, files []FileUpload) error {
 	if len(files) == 0 {
 		return nil
 	}
 
-	sm.mu.Lock()
-	ms, ok := sm.sessions[key]
-	if ok {
-		ms.LastUsedAt = time.Now()
-	}
-	sm.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("session manager: no sandbox for key %q", key)
+	ms, err := sm.getSession(key)
+	if err != nil {
+		return err
 	}
 
-	return sm.client.UploadFiles(ctx, ms.ExecDURL, files)
+	if uploadErr := sm.client.UploadFiles(ctx, ms.ExecDURL, files); uploadErr != nil {
+		if isConnectionError(uploadErr) {
+			sm.evictStale(key, ms.SandboxID, uploadErr)
+		}
+		return uploadErr
+	}
+	return nil
 }
 
 // ListDir lists directory entries in the sandbox using SearchFiles, validating
 // the path for read access. It infers directories from file paths.
+// Evicts the sandbox on connection errors.
 func (sm *SessionManager) ListDir(ctx context.Context, key string, dirPath string, maxDepth int) ([]DirEntry, error) {
 	if err := ValidateSandboxPath(dirPath); err != nil {
 		return nil, err
 	}
 
-	sm.mu.Lock()
-	ms, ok := sm.sessions[key]
-	if ok {
-		ms.LastUsedAt = time.Now()
-	}
-	sm.mu.Unlock()
-
-	if !ok {
-		return nil, fmt.Errorf("session manager: no sandbox for key %q", key)
+	ms, err := sm.getSession(key)
+	if err != nil {
+		return nil, err
 	}
 
 	if maxDepth <= 0 {
@@ -428,9 +415,12 @@ func (sm *SessionManager) ListDir(ctx context.Context, key string, dirPath strin
 	}
 
 	// Use glob pattern "**" to find all files under the directory.
-	files, err := sm.client.SearchFiles(ctx, ms.ExecDURL, dirPath, "**")
-	if err != nil {
-		return nil, fmt.Errorf("session manager: list dir: %w", err)
+	files, searchErr := sm.client.SearchFiles(ctx, ms.ExecDURL, dirPath, "**")
+	if searchErr != nil {
+		if isConnectionError(searchErr) {
+			sm.evictStale(key, ms.SandboxID, searchErr)
+		}
+		return nil, fmt.Errorf("session manager: list dir: %w", searchErr)
 	}
 
 	// Build entries: collect files and infer directories from paths.
@@ -481,6 +471,47 @@ func (sm *SessionManager) ListDir(ctx context.Context, key string, dirPath strin
 	}
 
 	return entries, nil
+}
+
+// getSession looks up a managed sandbox by key and updates LastUsedAt.
+func (sm *SessionManager) getSession(key string) (*ManagedSandbox, error) {
+	sm.mu.Lock()
+	ms, ok := sm.sessions[key]
+	if ok {
+		ms.LastUsedAt = time.Now()
+	}
+	sm.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("session manager: no sandbox for key %q", key)
+	}
+	return ms, nil
+}
+
+// evictStale removes a sandbox from the cache when a connection error is
+// detected. The next GetOrCreate call will recreate the sandbox transparently.
+func (sm *SessionManager) evictStale(key, sandboxID string, err error) {
+	slog.Warn("session manager: evicting stale sandbox after connection error",
+		"key", key,
+		"sandbox_id", sandboxID,
+		"error", err,
+	)
+	sm.mu.Lock()
+	if ms, ok := sm.sessions[key]; ok && ms.SandboxID == sandboxID {
+		delete(sm.sessions, key)
+	}
+	sm.mu.Unlock()
+}
+
+// isConnectionError checks if the error indicates the sandbox is unreachable.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "i/o timeout")
 }
 
 // SyncSessionFiles downloads files from /sandbox/out/session/ and
