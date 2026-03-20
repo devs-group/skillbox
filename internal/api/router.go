@@ -7,6 +7,7 @@ import (
 	"github.com/devs-group/skillbox/internal/api/middleware"
 	"github.com/devs-group/skillbox/internal/artifacts"
 	"github.com/devs-group/skillbox/internal/config"
+	"github.com/devs-group/skillbox/internal/github"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
 	"github.com/devs-group/skillbox/internal/sandbox"
@@ -25,6 +26,7 @@ import (
 func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, sm *sandbox.SessionManager, col ...*artifacts.Collector) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
+	engine.Use(middleware.CORSMiddleware())
 	engine.Use(middleware.RequestLogger())
 
 	// Health endpoints — no authentication required.
@@ -33,7 +35,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 
 	// API v1 — requires valid API key and tenant context.
 	v1 := engine.Group("/v1")
-	v1.Use(middleware.AuthMiddleware(s))
+	v1.Use(middleware.AuthMiddleware(s, cfg.HydraAdminURL))
 	v1.Use(middleware.TenantMiddleware())
 	{
 		// Execution endpoints
@@ -88,6 +90,67 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 				sbGroup.POST("/upload-skill", sandboxHandler.UploadSkill)
 				sbGroup.DELETE("/:session", sandboxHandler.Destroy)
 			}
+		}
+	}
+
+	// Marketplace (public — auth optional)
+	marketplace := engine.Group("/v1/marketplace")
+	marketplace.Use(middleware.OptionalAuthMiddleware(s, cfg.HydraAdminURL))
+	{
+		marketplace.GET("/skills", handlers.ListMarketplaceSkills(s))
+		marketplace.GET("/skills/:name", handlers.GetMarketplaceSkill(s))
+	}
+
+	// User endpoints (authenticated)
+	users := v1.Group("/users")
+	{
+		users.GET("/me", handlers.GetCurrentUser(s))
+		users.GET("", middleware.RequireRole(s, "admin"), handlers.ListUsers(s))
+		users.PUT("/:id/role", middleware.RequireRole(s, "admin"), handlers.UpdateUserRole(s))
+	}
+
+	// Group endpoints (admin only)
+	groups := v1.Group("/groups")
+	groups.Use(middleware.RequireRole(s, "admin"))
+	{
+		groups.POST("", handlers.CreateGroup(s))
+		groups.GET("", handlers.ListGroups(s))
+		groups.PUT("/:id", handlers.UpdateGroup(s))
+		groups.DELETE("/:id", handlers.DeleteGroup(s))
+		groups.POST("/:id/members", handlers.AddGroupMember(s))
+		groups.DELETE("/:id/members/:userId", handlers.RemoveGroupMember(s))
+		groups.GET("/:id/members", handlers.ListGroupMembers(s))
+	}
+
+	// Approval endpoints
+	approvals := v1.Group("/approvals")
+	{
+		approvals.POST("", handlers.CreateApprovalRequest(s))
+		approvals.GET("", handlers.ListApprovalRequests(s))
+		approvals.PUT("/:id", middleware.RequireRole(s, "admin"), handlers.UpdateApprovalRequest(s))
+	}
+
+	// Invite endpoints
+	invites := v1.Group("/invites")
+	{
+		invites.POST("", middleware.RequireRole(s, "admin"), handlers.CreateInviteCode(s))
+		invites.GET("", middleware.RequireRole(s, "admin"), handlers.ListInviteCodes(s))
+		invites.POST("/redeem", handlers.RedeemInviteCode(s))
+	}
+
+	// GitHub marketplace (public search/preview + authenticated install).
+	if cfg.GitHubToken != "" {
+		ghMarketplace := github.NewMarketplaceService(cfg.GitHubToken, reg, s)
+		gh := engine.Group("/v1/github")
+		{
+			gh.GET("/search", handlers.SearchGitHub(ghMarketplace))
+			gh.GET("/preview", handlers.PreviewGitHub(ghMarketplace))
+		}
+		ghAuth := engine.Group("/v1/github")
+		ghAuth.Use(middleware.AuthMiddleware(s, cfg.HydraAdminURL))
+		ghAuth.Use(middleware.TenantMiddleware())
+		{
+			ghAuth.POST("/install", handlers.InstallFromGitHub(ghMarketplace))
 		}
 	}
 

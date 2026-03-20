@@ -16,3 +16,8 @@ data:
   SKILLBOX_S3_BUCKET_EXECUTIONS: "executions"
   SKILLBOX_OPENSANDBOX_URL: "http://opensandbox:8080"
   SKILLBOX_SANDBOX_EXPIRATION: "5m"
+  # Ory Identity & OAuth2 (set when enterprise auth is enabled)
+  # SKILLBOX_KRATOS_PUBLIC_URL: "http://kratos:4433"
+  # SKILLBOX_KRATOS_ADMIN_URL: "http://kratos:4434"
+  # SKILLBOX_HYDRA_PUBLIC_URL: "http://hydra:4444"
+  # SKILLBOX_HYDRA_ADMIN_URL: "http://hydra:4445"

@@ -23,7 +23,7 @@ func TestAuthMiddleware_MissingHeader(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 	// No Authorization header set.
 
-	handler := AuthMiddleware(nil)
+	handler := AuthMiddleware(nil, "http://localhost:4445")
 	handler(c)
 
 	if w.Code != http.StatusUnauthorized {
@@ -53,7 +53,7 @@ func TestAuthMiddleware_InvalidFormat(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 	c.Request.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
 
-	handler := AuthMiddleware(nil)
+	handler := AuthMiddleware(nil, "http://localhost:4445")
 	handler(c)
 
 	if w.Code != http.StatusUnauthorized {
@@ -84,7 +84,7 @@ func TestAuthMiddleware_EmptyBearer(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 	c.Request.Header.Set("Authorization", "Bearer ")
 
-	handler := AuthMiddleware(nil)
+	handler := AuthMiddleware(nil, "http://localhost:4445")
 	handler(c)
 
 	if w.Code != http.StatusUnauthorized {
@@ -115,7 +115,7 @@ func TestAuthMiddleware_EmptyBearerWithSpaces(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 	c.Request.Header.Set("Authorization", "Bearer    ")
 
-	handler := AuthMiddleware(nil)
+	handler := AuthMiddleware(nil, "http://localhost:4445")
 	handler(c)
 
 	if w.Code != http.StatusUnauthorized {
@@ -124,6 +124,24 @@ func TestAuthMiddleware_EmptyBearerWithSpaces(t *testing.T) {
 
 	if !c.IsAborted() {
 		t.Error("expected context to be aborted")
+	}
+}
+
+func TestIsJWT(t *testing.T) {
+	tests := []struct {
+		token string
+		want  bool
+	}{
+		{"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature", true},
+		{"sk_live_abc123def456", false},
+		{"plaintoken", false},
+		{"eyJhbGci.only-one-dot", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isJWT(tt.token); got != tt.want {
+			t.Errorf("isJWT(%q) = %v, want %v", tt.token, got, tt.want)
+		}
 	}
 }
 

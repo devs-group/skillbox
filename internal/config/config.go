@@ -47,11 +47,20 @@ type Config struct {
 	SandboxSessionImage string        // default image for session sandboxes
 	MaxSessionSandboxes int           // max concurrent session sandboxes per server
 
+	// Ory (Identity & OAuth2)
+	KratosPublicURL string
+	KratosAdminURL  string
+	HydraPublicURL  string
+	HydraAdminURL   string
+
+	// GitHub (optional — marketplace disabled when empty)
+	GitHubToken string
+
 	// Server
-	APIPort           string
+	APIPort string
 
 	// Observability
-	LogLevel          string
+	LogLevel string
 }
 
 // defaultMemoryStr and defaultCPUStr store the raw string values from
@@ -103,6 +112,11 @@ func Load() (*Config, error) {
 		S3BucketExecs:     envOrDefault("SKILLBOX_S3_BUCKET_EXECUTIONS", "executions"),
 		OpenSandboxURL:    envOrDefault("SKILLBOX_OPENSANDBOX_URL", "http://localhost:8080"),
 		OpenSandboxAPIKey: require("SKILLBOX_OPENSANDBOX_API_KEY"),
+		KratosPublicURL:   envOrDefault("SKILLBOX_KRATOS_PUBLIC_URL", "http://localhost:4433"),
+		KratosAdminURL:    envOrDefault("SKILLBOX_KRATOS_ADMIN_URL", "http://localhost:4434"),
+		HydraPublicURL:    envOrDefault("SKILLBOX_HYDRA_PUBLIC_URL", "http://localhost:4444"),
+		HydraAdminURL:     envOrDefault("SKILLBOX_HYDRA_ADMIN_URL", "http://localhost:4445"),
+		GitHubToken:       get("GITHUB_TOKEN"),
 		APIPort:           envOrDefault("SKILLBOX_API_PORT", "8080"),
 		LogLevel:          envOrDefault("SKILLBOX_LOG_LEVEL", "info"),
 	}

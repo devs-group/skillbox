@@ -31,6 +31,17 @@ opensandbox:
   apiKey: ""
   expiration: "5m"
 
+# -- Ory Identity & OAuth2 (optional — enables enterprise auth)
+ory:
+  kratosPublicURL: ""
+  kratosAdminURL: ""
+  hydraPublicURL: ""
+  hydraAdminURL: ""
+
+# -- GitHub marketplace (optional — enables skill discovery from GitHub)
+github:
+  token: ""
+
 # -- Skillbox runtime settings
 config:
   logLevel: "info"

@@ -17,12 +17,19 @@ services:
       SKILLBOX_OPENSANDBOX_API_KEY: "${OPENSANDBOX_API_KEY:-skillbox-dev-key}"
       SKILLBOX_LOG_LEVEL: "debug"
       SKILLBOX_IMAGE_ALLOWLIST: "python:3.12-slim,python:3.11-slim,node:20-slim,node:18-slim,bash:5"
+      SKILLBOX_KRATOS_PUBLIC_URL: "http://kratos:4433"
+      SKILLBOX_KRATOS_ADMIN_URL: "http://kratos:4434"
+      SKILLBOX_HYDRA_PUBLIC_URL: "http://hydra:4444"
+      SKILLBOX_HYDRA_ADMIN_URL: "http://hydra:4445"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     depends_on:
       postgres:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       opensandbox:
+        condition: service_healthy
+      kratos:
         condition: service_healthy
     networks:
       - backend
@@ -39,6 +46,7 @@ services:
       - "${SKILLBOX_PG_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ../../scripts/init-ory-databases.sh:/docker-entrypoint-initdb.d/10-init-ory-databases.sh:ro
     networks:
       - backend
     healthcheck:
@@ -108,6 +116,134 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # --- Ory Kratos (Identity Management) ---
+  kratos-migrate:
+    image: oryd/kratos:v25.4.0
+    command: migrate sql -e --yes
+    environment:
+      DSN: postgres://skillbox:skillbox@postgres:5432/skillbox_kratos?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  kratos:
+    image: oryd/kratos:v25.4.0
+    command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier
+    ports:
+      - "${KRATOS_PUBLIC_PORT:-4433}:4433"  # Public API
+      - "${KRATOS_ADMIN_PORT:-4434}:4434"   # Admin API
+    environment:
+      DSN: postgres://skillbox:skillbox@postgres:5432/skillbox_kratos?sslmode=disable
+    volumes:
+      - ../../config/ory/kratos.yml:/etc/config/kratos/kratos.yml:ro
+      - ../../config/ory/identity.schema.json:/etc/config/kratos/identity.schema.json:ro
+    depends_on:
+      kratos-migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4433/health/alive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # --- Ory Hydra (OAuth2 / OIDC) ---
+  hydra-migrate:
+    image: oryd/hydra:v25.4.0
+    command: migrate sql -e --yes
+    environment:
+      DSN: postgres://skillbox:skillbox@postgres:5432/skillbox_hydra?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  hydra:
+    image: oryd/hydra:v25.4.0
+    command: serve all --dev
+    ports:
+      - "${HYDRA_PUBLIC_PORT:-4444}:4444"  # Public API (OAuth2)
+      - "${HYDRA_ADMIN_PORT:-4445}:4445"   # Admin API
+    environment:
+      DSN: postgres://skillbox:skillbox@postgres:5432/skillbox_hydra?sslmode=disable
+      URLS_SELF_ISSUER: http://localhost:4444
+      URLS_LOGIN: http://localhost:3007/auth/login
+      URLS_CONSENT: http://localhost:3007/auth/consent
+      URLS_LOGOUT: http://localhost:3007/auth/logout
+      URLS_DEVICE_VERIFICATION: http://localhost:3007/auth/device
+      URLS_DEVICE_SUCCESS: http://localhost:3007/auth/device/success
+      SECRETS_SYSTEM: skillbox-hydra-system-secret-change-in-production!
+      STRATEGIES_ACCESS_TOKEN: jwt
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4444/health/alive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # --- Hydra CLI OAuth2 client registration (one-time init) ---
+  hydra-init:
+    image: oryd/hydra:v25.4.0
+    depends_on:
+      hydra:
+        condition: service_healthy
+    networks:
+      - backend
+    entrypoint: >
+      /bin/sh -c "
+      hydra create client --endpoint http://hydra:4445 --name skillbox-cli --grant-type urn:ietf:params:oauth:grant-type:device_code --response-type code --token-endpoint-auth-method none --scope openid,offline_access --format json > /tmp/client.json 2>/dev/null || true;
+      echo 'Hydra CLI client registered';
+      cat /tmp/client.json 2>/dev/null || echo 'Client may already exist';
+      "
+
+  # --- Marketplace UI (Next.js) ---
+  marketplace:
+    build:
+      context: ../../marketplace
+      dockerfile: Dockerfile
+    ports:
+      - "${MARKETPLACE_PORT:-3007}:3007"
+    environment:
+      NEXT_PUBLIC_KRATOS_URL: http://localhost:4433
+      NEXT_PUBLIC_HYDRA_URL: http://localhost:4444
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    depends_on:
+      kratos:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3007 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # --- Mailpit (dev email testing) ---
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"   # Web UI
+      - "${MAILPIT_SMTP_PORT:-1025}:1025" # SMTP
+    networks:
+      - backend
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -154,6 +154,13 @@ func newRootCmd() *cobra.Command {
 		newExecCmd(),
 		newHealthCmd(),
 		newVersionCmd(),
+		// Enterprise commands
+		newLoginCmd(),
+		newLogoutCmd(),
+		newAddCmd(),
+		newListInstalledCmd(),
+		newRemoveCmd(),
+		newSearchCmd(),
 	)
 
 	return rootCmd

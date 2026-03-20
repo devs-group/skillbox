@@ -20,3 +20,15 @@ data:
   SKILLBOX_OPENSANDBOX_URL: {{ .Values.opensandbox.url | quote }}
   SKILLBOX_SANDBOX_EXPIRATION: {{ .Values.opensandbox.expiration | quote }}
   SKILLBOX_SANDBOX_SESSION_IMAGE: {{ .Values.config.sandboxSessionImage | quote }}
+  {{- if .Values.ory.kratosPublicURL }}
+  SKILLBOX_KRATOS_PUBLIC_URL: {{ .Values.ory.kratosPublicURL | quote }}
+  {{- end }}
+  {{- if .Values.ory.kratosAdminURL }}
+  SKILLBOX_KRATOS_ADMIN_URL: {{ .Values.ory.kratosAdminURL | quote }}
+  {{- end }}
+  {{- if .Values.ory.hydraPublicURL }}
+  SKILLBOX_HYDRA_PUBLIC_URL: {{ .Values.ory.hydraPublicURL | quote }}
+  {{- end }}
+  {{- if .Values.ory.hydraAdminURL }}
+  SKILLBOX_HYDRA_ADMIN_URL: {{ .Values.ory.hydraAdminURL | quote }}
+  {{- end }}

@@ -62,6 +62,13 @@ spec:
                   name: {{ include "skillbox.fullname" . }}
                   key: SKILLBOX_REDIS_URL
             {{- end }}
+            {{- if .Values.github.token }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skillbox.fullname" . }}
+                  key: GITHUB_TOKEN
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

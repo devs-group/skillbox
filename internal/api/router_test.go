@@ -450,7 +450,7 @@ func buildFilesRouter(s *store.Store) *gin.Engine {
 
 func authMiddlewareForTest(s *store.Store) gin.HandlerFunc {
 	// Delegate to the real middleware.
-	return middleware.AuthMiddleware(s)
+	return middleware.AuthMiddleware(s, "http://localhost:4445")
 }
 
 func tenantMiddlewareForTest() gin.HandlerFunc {
