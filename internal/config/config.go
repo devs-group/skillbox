@@ -56,6 +56,24 @@ type Config struct {
 	// GitHub (optional — marketplace disabled when empty)
 	GitHubToken string
 
+	// Security scanner
+	ScannerEnabled bool
+	ScannerTimeout time.Duration
+
+	// Security scanner — LLM deep analysis (Tier 3)
+	ScannerLLMEnabled       bool
+	ScannerLLMAPIKey        string
+	ScannerLLMModel         string
+	ScannerLLMTimeout       time.Duration
+	ScannerLLMMaxConcurrent int
+
+	// Security scanner — custom patterns (optional)
+	ScannerPatternsFile string // path to custom patterns YAML (merged on top of defaults)
+	ScannerOSSFFeedDir  string // path to directory of OSV JSON files from OSSF malicious packages feed
+
+	// Admin authentication
+	AdminToken string // static admin token for /v1/admin/* endpoints (env: SKILLBOX_ADMIN_TOKEN)
+
 	// Server
 	APIPort string
 
@@ -238,6 +256,53 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SKILLBOX_MAX_SESSION_SANDBOXES must be positive, got %d", maxSessions)
 	}
 	cfg.MaxSessionSandboxes = maxSessions
+
+	// Security scanner
+	scannerEnabled, err := parseBool(envOrDefault("SKILLBOX_SCANNER_ENABLED", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_ENABLED: %w", err)
+	}
+	cfg.ScannerEnabled = scannerEnabled
+
+	cfg.ScannerTimeout, err = time.ParseDuration(envOrDefault("SKILLBOX_SCANNER_TIMEOUT", "30s"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_TIMEOUT: %w", err)
+	}
+
+	// Scanner LLM (Tier 3) — opt-in, default disabled.
+	llmEnabled, err := parseBool(envOrDefault("SKILLBOX_SCANNER_LLM_ENABLED", "false"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_ENABLED: %w", err)
+	}
+	cfg.ScannerLLMEnabled = llmEnabled
+	cfg.ScannerLLMAPIKey = get("SKILLBOX_SCANNER_LLM_API_KEY")
+	cfg.ScannerLLMModel = envOrDefault("SKILLBOX_SCANNER_LLM_MODEL", "claude-haiku-4-5-20251001")
+
+	cfg.ScannerLLMTimeout, err = time.ParseDuration(envOrDefault("SKILLBOX_SCANNER_LLM_TIMEOUT", "10s"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_TIMEOUT: %w", err)
+	}
+
+	llmMaxConcurrent, err := strconv.Atoi(envOrDefault("SKILLBOX_SCANNER_LLM_MAX_CONCURRENT", "5"))
+	if err != nil {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_MAX_CONCURRENT: %w", err)
+	}
+	if llmMaxConcurrent <= 0 {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_MAX_CONCURRENT must be positive, got %d", llmMaxConcurrent)
+	}
+	cfg.ScannerLLMMaxConcurrent = llmMaxConcurrent
+
+	// Validate API key at startup when LLM is enabled.
+	if cfg.ScannerLLMEnabled && cfg.ScannerLLMAPIKey == "" {
+		return nil, fmt.Errorf("SKILLBOX_SCANNER_LLM_API_KEY is required when SKILLBOX_SCANNER_LLM_ENABLED=true")
+	}
+
+	// Admin token (required for /v1/admin/* endpoints).
+	cfg.AdminToken = get("SKILLBOX_ADMIN_TOKEN")
+
+	// Custom scanner patterns (optional).
+	cfg.ScannerPatternsFile = get("SKILLBOX_SCANNER_PATTERNS_FILE")
+	cfg.ScannerOSSFFeedDir = get("SKILLBOX_SCANNER_OSSF_FEED_DIR")
 
 	return cfg, nil
 }

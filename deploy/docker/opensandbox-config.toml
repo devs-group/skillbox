@@ -9,3 +9,7 @@ execd_image = "opensandbox/execd:latest"
 
 [docker]
 network_mode = "bridge"
+host_ip = "host.docker.internal"
+
+[egress]
+image = "opensandbox/egress:latest"
