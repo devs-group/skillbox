@@ -42,7 +42,7 @@ func (s *Store) ListGroups(ctx context.Context, tenantID string) ([]*Group, erro
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []*Group
 	for rows.Next() {
@@ -122,7 +122,7 @@ func (s *Store) ListGroupMembers(ctx context.Context, groupID string) ([]*User, 
 	if err != nil {
 		return nil, fmt.Errorf("list group members: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var users []*User
 	for rows.Next() {

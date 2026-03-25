@@ -421,7 +421,7 @@ func (h *SandboxHandler) UploadFile(c *gin.Context) {
 		response.RespondError(c, http.StatusBadRequest, "bad_request", "file form field is required: "+err.Error())
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(file)
 	if err != nil {

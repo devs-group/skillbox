@@ -240,12 +240,12 @@ func TestHandle_ListDir(t *testing.T) {
 func TestHandle_PresentFiles(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/sandbox/read-file":
+		switch r.URL.Path {
+		case "/v1/sandbox/read-file":
 			_ = json.NewEncoder(w).Encode(struct {
 				Content string `json:"content"`
 			}{Content: "file content here"})
-		case r.URL.Path == "/v1/files":
+		case "/v1/files":
 			callCount++
 			_ = json.NewEncoder(w).Encode(FileInfo{
 				ID:   "file-abc-123",

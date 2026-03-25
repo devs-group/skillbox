@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -130,16 +128,3 @@ func PollForToken(hydraPublicURL, clientID, deviceCode string, interval int) (*T
 	}
 }
 
-// openBrowser opens the given URL in the user's default browser.
-func openBrowser(rawURL string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", rawURL)
-	case "linux":
-		cmd = exec.Command("xdg-open", rawURL)
-	default:
-		return fmt.Errorf("unsupported platform %s — please open %s manually", runtime.GOOS, rawURL)
-	}
-	return cmd.Start()
-}
