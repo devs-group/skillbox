@@ -71,6 +71,10 @@ func CreateExecution(r *runner.Runner) gin.HandlerFunc {
 				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+req.Skill+"@"+req.Version)
 				return
 			}
+			if errors.Is(err, runner.ErrSkillNotAvailable) {
+				response.RespondError(c, http.StatusConflict, "skill_not_available", err.Error())
+				return
+			}
 			if errors.Is(err, runner.ErrImageNotAllowed) {
 				response.RespondError(c, http.StatusBadRequest, "image_not_allowed", "skill image is not in the allowlist")
 				return

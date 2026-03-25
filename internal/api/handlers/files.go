@@ -17,22 +17,27 @@ import (
 
 // FilesHandler groups the handler methods for the /v1/files endpoints.
 type FilesHandler struct {
-	store     *store.Store
-	collector *artifacts.Collector
+	store       *store.Store
+	collector   *artifacts.Collector
+	maxFileSize int64 // maximum upload size in bytes
 }
 
-// NewFilesHandler creates a new FilesHandler with the given store and
-// artifact collector dependencies.
-func NewFilesHandler(st *store.Store, col *artifacts.Collector) *FilesHandler {
+// NewFilesHandler creates a new FilesHandler with the given store,
+// artifact collector, and maximum upload size in bytes.
+func NewFilesHandler(st *store.Store, col *artifacts.Collector, maxFileSize int64) *FilesHandler {
 	return &FilesHandler{
-		store:     st,
-		collector: col,
+		store:       st,
+		collector:   col,
+		maxFileSize: maxFileSize,
 	}
 }
 
 // Upload handles POST /v1/files.
 // Accepts multipart form with "file" field, uploads to S3, creates DB record.
 func (h *FilesHandler) Upload(c *gin.Context) {
+	// Limit request body size to prevent memory exhaustion from large uploads.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxFileSize)
+
 	tenantID := middleware.GetTenantID(c)
 
 	upload, header, formErr := c.Request.FormFile("file")
@@ -76,6 +81,8 @@ func (h *FilesHandler) Upload(c *gin.Context) {
 
 	created, createErr := h.store.CreateFile(c.Request.Context(), newFile)
 	if createErr != nil {
+		// Best-effort cleanup of the orphaned S3 object.
+		_ = h.collector.DeleteObject(c.Request.Context(), s3Key)
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to create file record")
 		return
 	}
@@ -179,6 +186,9 @@ func (h *FilesHandler) Download(c *gin.Context) {
 // content to S3, and creates a new version record linked to the original
 // via parent_id.
 func (h *FilesHandler) Update(c *gin.Context) {
+	// Limit request body size to prevent memory exhaustion from large uploads.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxFileSize)
+
 	id := c.Param("id")
 	if id == "" {
 		response.RespondError(c, http.StatusBadRequest, "bad_request", "file id is required")
@@ -237,6 +247,8 @@ func (h *FilesHandler) Update(c *gin.Context) {
 
 	created, createErr := h.store.CreateFile(c.Request.Context(), newFile)
 	if createErr != nil {
+		// Best-effort cleanup of the orphaned S3 object.
+		_ = h.collector.DeleteObject(c.Request.Context(), newS3Key)
 		response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to create file version record")
 		return
 	}

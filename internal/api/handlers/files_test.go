@@ -32,7 +32,7 @@ func newTestFilesHandler(t *testing.T) (*FilesHandler, sqlmock.Sqlmock, func()) 
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
 	st := store.NewWithDB(db)
-	h := NewFilesHandler(st, nil)
+	h := NewFilesHandler(st, nil, 50*1024*1024) // 50MB test limit
 	return h, mock, func() { db.Close() } //nolint:errcheck
 }
 

@@ -75,7 +75,7 @@ func setupRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock, func()) {
 	// Pass nil runner and nil registry since we are not testing execution
 	// or skill endpoints. Pass nil collector as well; the router skips
 	// file route registration when no collector is provided.
-	router := NewRouter(cfg, st, nil, nil, nil, nil, nil)
+	router := NewRouter(cfg, st, nil, nil, nil, nil, nil, nil)
 
 	return router, mock, func() { db.Close() } //nolint:errcheck
 }
@@ -464,7 +464,7 @@ type filesHandlerWrapper struct {
 
 func newFilesHandlerForTest(s *store.Store) *filesHandlerWrapper {
 	return &filesHandlerWrapper{
-		inner: handlers.NewFilesHandler(s, nil),
+		inner: handlers.NewFilesHandler(s, nil, 50*1024*1024),
 	}
 }
 
@@ -905,8 +905,8 @@ func TestRouter_FileVersions_Returns200(t *testing.T) {
 			AddRow("file-uuid-1", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(100), "s3/v1", 1, nil, now, now))
 
-	// ListFileVersions.
-	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
+	// ListFileVersions (recursive CTE).
+	mock.ExpectQuery("WITH RECURSIVE root AS").
 		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-v2", testTenantID, nil, nil, "data.csv",
@@ -959,8 +959,8 @@ func TestRouter_FileVersions_EmptyReturnsArray(t *testing.T) {
 			AddRow("file-uuid-1", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(100), "s3/v1", 1, nil, now, now))
 
-	// ListFileVersions returns no rows.
-	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
+	// ListFileVersions returns no rows (recursive CTE).
+	mock.ExpectQuery("WITH RECURSIVE root AS").
 		WithArgs("file-uuid-1", testTenantID).
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
@@ -1059,8 +1059,8 @@ func TestRouter_FileVersions_DBError_Returns500(t *testing.T) {
 			AddRow("file-uuid-1", testTenantID, nil, nil, "data.csv",
 				"text/csv", int64(100), "s3/v1", 1, nil, now, now))
 
-	// ListFileVersions fails.
-	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
+	// ListFileVersions fails (recursive CTE).
+	mock.ExpectQuery("WITH RECURSIVE root AS").
 		WithArgs("file-uuid-1", testTenantID).
 		WillReturnError(http.ErrServerClosed)
 
