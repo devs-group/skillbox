@@ -91,7 +91,7 @@ func (s *Store) ListInviteCodes(ctx context.Context, tenantID string) ([]*Invite
 	if err != nil {
 		return nil, fmt.Errorf("list invite codes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var codes []*InviteCode
 	for rows.Next() {

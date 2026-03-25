@@ -45,7 +45,7 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 		if err != nil {
 			return nil, 0, fmt.Errorf("list marketplace skills: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		for rows.Next() {
 			var rec SkillRecord
@@ -75,7 +75,7 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 		if err != nil {
 			return nil, 0, fmt.Errorf("list marketplace skills: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		for rows.Next() {
 			var rec SkillRecord
