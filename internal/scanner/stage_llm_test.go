@@ -482,8 +482,8 @@ func TestLLMStage_RequestFormat(t *testing.T) {
 	if capturedReq.Messages[0].Role != "user" {
 		t.Errorf("expected user role, got %s", capturedReq.Messages[0].Role)
 	}
-	// Content should NOT be in system message.
-	if strings.Contains(capturedReq.System, "subprocess") {
+	// Actual skill file content should NOT be in system message.
+	if strings.Contains(capturedReq.System, "git', 'status'") {
 		t.Error("scanned content should be in user message, not system message")
 	}
 	// User message should contain the skill content.
