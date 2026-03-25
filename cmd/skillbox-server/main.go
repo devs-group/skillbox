@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -110,8 +111,40 @@ func main() {
 	// Initialize runner
 	r := runner.New(cfg, sbClient, reg, db, collector)
 
+	// Initialize background scan worker.
+	var scanWorker *scanner.Worker
+	if cfg.ScannerEnabled {
+		scanWorker = scanner.NewWorker(scanner.WorkerConfig{
+			Registry: reg,
+			Scanner:  sc,
+			Logger:   slog.Default(),
+			UpdateStatus: func(ctx context.Context, tenantID, name, version, status string, result json.RawMessage) error {
+				return db.UpdateSkillStatus(ctx, tenantID, name, version, status, result)
+			},
+			ListPending: func(ctx context.Context) ([]scanner.ScanJob, error) {
+				recs, err := db.ListPendingSkills(ctx)
+				if err != nil {
+					return nil, err
+				}
+				jobs := make([]scanner.ScanJob, len(recs))
+				for i, r := range recs {
+					jobs[i] = scanner.ScanJob{TenantID: r.TenantID, Skill: r.Name, Version: r.Version}
+				}
+				return jobs, nil
+			},
+			GetApprovalPolicy: func(ctx context.Context, tenantID string) (string, error) {
+				cfg, err := db.GetScannerConfig(ctx, tenantID)
+				if err != nil {
+					return "auto", err
+				}
+				return cfg.ApprovalPolicy, nil
+			},
+		})
+		slog.Info("background scan worker initialized")
+	}
+
 	// Build router
-	router := api.NewRouter(cfg, db, r, reg, sc, sessMgr, pipeline, collector)
+	router := api.NewRouter(cfg, db, r, reg, sc, sessMgr, pipeline, scanWorker, collector)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -124,6 +157,12 @@ func main() {
 	// Graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Start background scan worker goroutine.
+	if scanWorker != nil {
+		go scanWorker.Start(ctx)
+		slog.Info("background scan worker started")
+	}
 
 	// Start background session sandbox cleanup goroutine
 	go func() {

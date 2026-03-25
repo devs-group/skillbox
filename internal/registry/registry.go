@@ -69,6 +69,16 @@ func objectPath(tenantID, skillName, version string) string {
 	return path.Join(tenantID, skillName, version, "skill.zip")
 }
 
+// pendingPath returns the S3 key for a pending (pre-scan) skill archive.
+func pendingPath(tenantID, skillName, version string) string {
+	return path.Join(tenantID, ".pending", skillName, version, "skill.zip")
+}
+
+// quarantinePath returns the S3 key for a quarantined skill archive.
+func quarantinePath(tenantID, skillName, version string) string {
+	return path.Join(tenantID, ".quarantine", skillName, version, "skill.zip")
+}
+
 // Upload stores a skill zip archive in the registry after validating that
 // the provided data is a valid zip file (by checking zip headers). The
 // archive is stored at {tenantID}/{skillName}/{version}/skill.zip.
@@ -101,6 +111,110 @@ func (r *Registry) Upload(ctx context.Context, tenantID, skillName, version stri
 	}
 
 	return nil
+}
+
+// Submit stores a skill zip archive in the pending prefix for async scanning.
+// This is the entry point for all ingestion paths — no skill goes directly
+// to the available prefix.
+func (r *Registry) Submit(ctx context.Context, tenantID, skillName, version string, zipData io.Reader, size int64) error {
+	if tenantID == "" || skillName == "" || version == "" {
+		return fmt.Errorf("tenantID, skillName, and version are required")
+	}
+
+	buf, err := io.ReadAll(io.LimitReader(zipData, size+1))
+	if err != nil {
+		return fmt.Errorf("reading zip data: %w", err)
+	}
+	if int64(len(buf)) > size {
+		return fmt.Errorf("zip data exceeds declared size of %d bytes", size)
+	}
+
+	if _, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf))); err != nil {
+		return fmt.Errorf("invalid zip archive: %w", err)
+	}
+
+	key := pendingPath(tenantID, skillName, version)
+	_, err = r.client.PutObject(ctx, r.bucket, key, bytes.NewReader(buf), int64(len(buf)), minio.PutObjectOptions{
+		ContentType: "application/zip",
+	})
+	if err != nil {
+		return fmt.Errorf("submitting skill archive to %q: %w", key, err)
+	}
+
+	return nil
+}
+
+// Promote moves a skill from the pending prefix to the main (available)
+// prefix. Called by the scan worker when a skill passes scanning.
+func (r *Registry) Promote(ctx context.Context, tenantID, skillName, version string) error {
+	src := pendingPath(tenantID, skillName, version)
+	dst := objectPath(tenantID, skillName, version)
+
+	// Copy from pending to main.
+	_, err := r.client.CopyObject(ctx, minio.CopyDestOptions{
+		Bucket: r.bucket,
+		Object: dst,
+	}, minio.CopySrcOptions{
+		Bucket: r.bucket,
+		Object: src,
+	})
+	if err != nil {
+		return fmt.Errorf("promoting skill (copy %s → %s): %w", src, dst, err)
+	}
+
+	// Remove the pending copy.
+	if err := r.client.RemoveObject(ctx, r.bucket, src, minio.RemoveObjectOptions{}); err != nil {
+		// Non-fatal: the skill is already promoted. Log and continue.
+		return nil
+	}
+
+	return nil
+}
+
+// Quarantine moves a skill from the pending prefix to the quarantine prefix.
+// Called when a skill is blocked by the scanner.
+func (r *Registry) Quarantine(ctx context.Context, tenantID, skillName, version string) error {
+	src := pendingPath(tenantID, skillName, version)
+	dst := quarantinePath(tenantID, skillName, version)
+
+	_, err := r.client.CopyObject(ctx, minio.CopyDestOptions{
+		Bucket: r.bucket,
+		Object: dst,
+	}, minio.CopySrcOptions{
+		Bucket: r.bucket,
+		Object: src,
+	})
+	if err != nil {
+		return fmt.Errorf("quarantining skill (copy %s → %s): %w", src, dst, err)
+	}
+
+	_ = r.client.RemoveObject(ctx, r.bucket, src, minio.RemoveObjectOptions{})
+	return nil
+}
+
+// DownloadPending returns a reader for a skill in the pending prefix.
+// Used by the scan worker to read skills awaiting scanning.
+func (r *Registry) DownloadPending(ctx context.Context, tenantID, skillName, version string) (io.ReadCloser, error) {
+	if tenantID == "" || skillName == "" || version == "" {
+		return nil, fmt.Errorf("tenantID, skillName, and version are required")
+	}
+
+	key := pendingPath(tenantID, skillName, version)
+	obj, err := r.client.GetObject(ctx, r.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("downloading pending skill %q: %w", key, err)
+	}
+
+	if _, err := obj.Stat(); err != nil {
+		_ = obj.Close()
+		errResp := minio.ErrorResponse{}
+		if errors.As(err, &errResp) && errResp.Code == "NoSuchKey" {
+			return nil, ErrSkillNotFound
+		}
+		return nil, fmt.Errorf("pending skill %q not found: %w", key, err)
+	}
+
+	return obj, nil
 }
 
 // Download returns a reader for the skill zip archive. The caller is

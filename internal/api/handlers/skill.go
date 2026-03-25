@@ -29,10 +29,10 @@ import (
 //   - multipart/form-data: zip in a "file" form field
 //
 // The zip is validated (must contain SKILL.md with valid frontmatter),
-// then uploaded to the registry. Skill metadata is also persisted in
-// PostgreSQL so that list operations can return descriptions without
-// downloading every zip archive. Returns 201 with skill metadata on success.
-func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc scanner.Scanner) gin.HandlerFunc {
+// then submitted to the pending prefix for async scanning. Returns 202
+// Accepted with skill metadata. The background scan worker processes the
+// skill and transitions it to available, review, or quarantined.
+func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc scanner.Scanner, worker *scanner.Worker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
@@ -107,7 +107,8 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 			return
 		}
 
-		// Security scan: ZIP bomb check + tiered scanning.
+		// Quick pre-storage validation: reject obvious zip bombs before
+		// writing to MinIO. The full tiered scan runs asynchronously.
 		zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 		if err != nil {
 			response.RespondError(c, http.StatusBadRequest, "invalid_skill", "failed to read zip for scanning: "+err.Error())
@@ -130,73 +131,42 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 			return
 		}
 
-		scanResult, err := sc.Scan(c.Request.Context(), zr, parsedSkill)
+		// Submit to pending prefix for async scanning.
+		err = reg.Submit(c.Request.Context(), tenantID, parsedSkill.Name, parsedSkill.Version, bytes.NewReader(zipData), int64(len(zipData)))
 		if err != nil {
-			// Infrastructure failure — fail closed.
-			slog.Error("security scan infrastructure failure",
-				"skill_name", parsedSkill.Name,
-				"tenant_id", tenantID,
-				"error", err,
-			)
-			response.RespondError(c, http.StatusInternalServerError, "internal_error", "security scan unavailable")
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to submit skill: "+err.Error())
 			return
 		}
 
-		if !scanResult.Pass {
-			scanID := uuid.NewString()
-			categories := make([]string, 0)
-			seen := make(map[string]bool)
-			for _, f := range scanResult.Findings {
-				if !seen[f.Category] {
-					categories = append(categories, f.Category)
-					seen[f.Category] = true
-				}
-			}
-			slog.Warn("security scan blocked upload",
-				"scan_id", scanID,
-				"skill_name", parsedSkill.Name,
-				"skill_version", parsedSkill.Version,
-				"tenant_id", tenantID,
-				"categories", categories,
-				"tier", scanResult.Tier,
-				"duration_ms", scanResult.Duration.Milliseconds(),
-			)
-			// Return scan_id but not categories — detailed findings are logged
-			// server-side only. Exposing categories helps attackers craft evasion.
-			response.RespondErrorWithDetails(c, http.StatusUnprocessableEntity, "security_scan_failed",
-				"upload rejected by security scan",
-				map[string]any{"scan_id": scanID},
-			)
-			return
-		}
-
-		// Upload to registry (MinIO/S3).
-		err = reg.Upload(c.Request.Context(), tenantID, parsedSkill.Name, parsedSkill.Version, bytes.NewReader(zipData), int64(len(zipData)))
-		if err != nil {
-			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to upload skill: "+err.Error())
-			return
-		}
-
-		// Persist metadata in PostgreSQL for fast listing with descriptions.
+		// Persist metadata with pending status.
 		err = s.UpsertSkill(c.Request.Context(), &store.SkillRecord{
 			TenantID:    tenantID,
 			Name:        parsedSkill.Name,
 			Version:     parsedSkill.Version,
 			Description: parsedSkill.Description,
 			Lang:        parsedSkill.Lang,
+			Status:      store.SkillStatusPending,
 		})
 		if err != nil {
-			// Log but don't fail — the skill is already in the registry.
-			// The list endpoint falls back to registry listing if needed.
 			_ = c.Error(err)
 		}
 
-		c.JSON(http.StatusCreated, skill.SkillSummary{
-			Name:        parsedSkill.Name,
-			Version:     parsedSkill.Version,
-			Description: parsedSkill.Description,
-			Lang:        parsedSkill.Lang,
-			Mode:        parsedSkill.Mode,
+		// Queue async scan job.
+		if worker != nil {
+			worker.Submit(scanner.ScanJob{
+				TenantID: tenantID,
+				Skill:    parsedSkill.Name,
+				Version:  parsedSkill.Version,
+			})
+		}
+
+		c.JSON(http.StatusAccepted, gin.H{
+			"name":        parsedSkill.Name,
+			"version":     parsedSkill.Version,
+			"description": parsedSkill.Description,
+			"lang":        parsedSkill.Lang,
+			"mode":        parsedSkill.Mode,
+			"status":      store.SkillStatusPending,
 		})
 	}
 }

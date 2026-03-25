@@ -9,6 +9,7 @@ import (
 	"github.com/devs-group/skillbox/internal/api/middleware"
 	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/github"
+	"github.com/devs-group/skillbox/internal/scanner"
 )
 
 // SearchGitHub handles GET /v1/github/search?q=...&page=1.
@@ -65,9 +66,9 @@ func PreviewGitHub(m *github.MarketplaceService) gin.HandlerFunc {
 }
 
 // InstallFromGitHub handles POST /v1/github/install.
-// Fetches a skill from GitHub and installs it into the tenant's registry.
-// Requires authentication (needs tenant context).
-func InstallFromGitHub(m *github.MarketplaceService) gin.HandlerFunc {
+// Fetches a skill from GitHub, submits it to the pending prefix for async
+// scanning, and returns 202 Accepted.
+func InstallFromGitHub(m *github.MarketplaceService, worker *scanner.Worker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
@@ -90,7 +91,16 @@ func InstallFromGitHub(m *github.MarketplaceService) gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusCreated, result)
+		// Queue async scan job.
+		if worker != nil {
+			worker.Submit(scanner.ScanJob{
+				TenantID: tenantID,
+				Skill:    result.Name,
+				Version:  result.Version,
+			})
+		}
+
+		c.JSON(http.StatusAccepted, result)
 	}
 }
 

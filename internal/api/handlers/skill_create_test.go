@@ -19,7 +19,7 @@ func TestCreateFromFields_ValidationErrors(t *testing.T) {
 	// errors are returned before those are called. We can pass nil safely
 	// for tests that only exercise request validation.
 	cfg := &config.Config{MaxSkillSize: 10 << 20} // 10MB
-	handler := CreateFromFields(nil, nil, cfg)
+	handler := CreateFromFields(nil, nil, cfg, nil)
 
 	tests := []struct {
 		name       string
@@ -110,7 +110,7 @@ func TestCreateFromFields_DefaultLangAndVersion(t *testing.T) {
 	// validation passed. We catch the panic to verify.
 
 	cfg := &config.Config{MaxSkillSize: 10 << 20}
-	handler := CreateFromFields(nil, nil, cfg)
+	handler := CreateFromFields(nil, nil, cfg, nil)
 
 	body := map[string]any{
 		"name":        "test-skill",

@@ -329,22 +329,22 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 
 	zipBytes := buf.Bytes()
 
-	// 5. Upload to registry.
-	err = m.reg.Upload(ctx, tenantID, parsed.Name, parsed.Version, bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	// 5. Submit to pending prefix for async scanning.
+	err = m.reg.Submit(ctx, tenantID, parsed.Name, parsed.Version, bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("upload to registry: %w", err)
+		return nil, fmt.Errorf("submit to registry: %w", err)
 	}
 
-	// 6. Upsert metadata.
+	// 6. Upsert metadata with pending status.
 	err = m.store.UpsertSkill(ctx, &store.SkillRecord{
 		TenantID:    tenantID,
 		Name:        parsed.Name,
 		Version:     parsed.Version,
 		Description: parsed.Description,
 		Lang:        parsed.Lang,
+		Status:      store.SkillStatusPending,
 	})
 	if err != nil {
-		// Non-fatal: skill is already in the registry.
 		slog.Warn("failed to upsert skill metadata", "error", err)
 	}
 
