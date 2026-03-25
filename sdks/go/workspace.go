@@ -1,6 +1,7 @@
 package skillbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -258,7 +259,7 @@ func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.Raw
 	var presented []string
 
 	for _, fp := range a.Filepaths {
-		data, err := t.client.SandboxReadFile(ctx, t.sessionID, fp)
+		data, err := t.client.SandboxDownloadFile(ctx, t.sessionID, fp)
 		if err != nil {
 			continue
 		}
@@ -266,7 +267,7 @@ func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.Raw
 		filename := filepath.Base(fp)
 		mimeType := detectMimeType(filename)
 
-		fileInfo, err := t.client.UploadFileFromReader(ctx, filename, strings.NewReader(data))
+		fileInfo, err := t.client.UploadFileFromReader(ctx, filename, bytes.NewReader(data))
 		if err != nil {
 			continue
 		}

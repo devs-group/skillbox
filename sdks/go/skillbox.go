@@ -980,6 +980,32 @@ func (c *Client) SandboxReadFile(ctx context.Context, sessionID, path string) (s
 	return result.Content, nil
 }
 
+// SandboxDownloadFile downloads raw binary file content from the session sandbox.
+// Unlike SandboxReadFile, this returns raw bytes without JSON string encoding,
+// making it safe for binary files (PDFs, images, etc.).
+func (c *Client) SandboxDownloadFile(ctx context.Context, sessionID, path string) ([]byte, error) {
+	body, _ := json.Marshal(struct {
+		Path string `json:"path"`
+	}{Path: path})
+
+	resp, err := c.doSessionRequest(ctx, http.MethodPost, "/v1/sandbox/download-file", sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("skillbox: download file: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("skillbox: download file read body: %w", err)
+	}
+	return data, nil
+}
+
 // SandboxWriteFile writes content to a file inside the session sandbox.
 // When appendFlag is true, the content is appended to the existing file.
 func (c *Client) SandboxWriteFile(ctx context.Context, sessionID, path, content string, appendFlag bool) error {
