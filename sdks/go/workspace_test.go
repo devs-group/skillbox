@@ -77,7 +77,7 @@ func TestHandle_Bash(t *testing.T) {
 			ExitCode: 0,
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test")
 	toolkit := NewWorkspaceToolkit(client, "sess-1")
@@ -103,7 +103,7 @@ func TestHandle_Bash_WithStderr(t *testing.T) {
 			ExitCode: 1,
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
 	output, _, _ := toolkit.Handle(context.Background(), "bash",
@@ -135,7 +135,7 @@ func TestHandle_ReadFile(t *testing.T) {
 			Content string `json:"content"`
 		}{Content: "line1\nline2\nline3\nline4\nline5"})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
 
@@ -189,7 +189,7 @@ func TestHandle_WriteFile(t *testing.T) {
 		gotAppend, _ = body["append"].(bool)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
 	output, _, _ := toolkit.Handle(context.Background(), "write_file",
@@ -220,7 +220,7 @@ func TestHandle_ListDir(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
 	output, _, _ := toolkit.Handle(context.Background(), "ls",
@@ -253,7 +253,7 @@ func TestHandle_PresentFiles(t *testing.T) {
 			})
 		}
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
 	output, files, err := toolkit.Handle(context.Background(), "present_files",
@@ -310,7 +310,7 @@ func TestWithBashTimeout(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(SandboxExecResponse{Stdout: "ok"})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1",
 		WithBashTimeout(30*time.Second))

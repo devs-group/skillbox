@@ -20,7 +20,7 @@ func TestE2E_CreateFromFields_SDK_To_Handler(t *testing.T) {
 	defer cleanup()
 
 	srv := httptest.NewServer(router)
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := skillboxsdk.New(srv.URL, testToken, skillboxsdk.WithTenant(testTenantID))
 
