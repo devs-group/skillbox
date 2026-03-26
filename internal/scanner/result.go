@@ -68,10 +68,10 @@ func (r *ScanResult) GenerateSummary() string {
 			b.WriteString("\n")
 		}
 		if f.MatchText != "" {
-			b.WriteString(fmt.Sprintf("     Match: %s\n", f.MatchText))
+			fmt.Fprintf(&b, "     Match: %s\n", f.MatchText)
 		}
 		if f.Remediation != "" {
-			b.WriteString(fmt.Sprintf("     Fix: %s\n", f.Remediation))
+			fmt.Fprintf(&b, "     Fix: %s\n", f.Remediation)
 		}
 		b.WriteString("\n")
 	}
