@@ -13,3 +13,6 @@ var ErrImageNotAllowed = errors.New("runner: image not in allowlist")
 
 // ErrTimeout is returned when execution exceeds the configured timeout.
 var ErrTimeout = errors.New("runner: execution timed out")
+
+// ErrSkillNotAvailable is returned when a skill exists but is not in 'available' status.
+var ErrSkillNotAvailable = errors.New("runner: skill not available")

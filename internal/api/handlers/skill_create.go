@@ -10,6 +10,7 @@ import (
 	"github.com/devs-group/skillbox/internal/api/response"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
+	"github.com/devs-group/skillbox/internal/scanner"
 	"github.com/devs-group/skillbox/internal/skill"
 	"github.com/devs-group/skillbox/internal/store"
 )
@@ -29,7 +30,7 @@ type CreateFromFieldsRequest struct {
 // It accepts structured JSON fields, builds a SKILL.md and zip archive
 // server-side, then uploads to the registry. Upsert semantics: if the
 // skill already exists for this tenant, it is replaced.
-func CreateFromFields(reg *registry.Registry, s *store.Store, cfg *config.Config) gin.HandlerFunc {
+func CreateFromFields(reg *registry.Registry, s *store.Store, cfg *config.Config, worker *scanner.Worker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
@@ -72,32 +73,42 @@ func CreateFromFields(reg *registry.Registry, s *store.Store, cfg *config.Config
 			return
 		}
 
-		// Upload to registry (MinIO/S3).
-		err = reg.Upload(c.Request.Context(), tenantID, req.Name, version, bytes.NewReader(zipData), int64(len(zipData)))
+		// Submit to pending prefix for async scanning.
+		err = reg.Submit(c.Request.Context(), tenantID, req.Name, version, bytes.NewReader(zipData), int64(len(zipData)))
 		if err != nil {
-			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to upload skill")
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to submit skill")
 			return
 		}
 
-		// Persist metadata in PostgreSQL for fast listing.
+		// Persist metadata with pending status.
 		err = s.UpsertSkill(c.Request.Context(), &store.SkillRecord{
 			TenantID:    tenantID,
 			Name:        req.Name,
 			Version:     version,
 			Description: req.Description,
 			Lang:        lang,
+			Status:      store.SkillStatusPending,
 		})
 		if err != nil {
-			// Log but don't fail — the skill is already in the registry.
 			_ = c.Error(err)
 		}
 
-		c.JSON(http.StatusCreated, skill.SkillSummary{
-			Name:        req.Name,
-			Version:     version,
-			Description: req.Description,
-			Lang:        lang,
-			Mode:        "executable",
+		// Queue async scan job.
+		if worker != nil {
+			worker.Submit(scanner.ScanJob{
+				TenantID: tenantID,
+				Skill:    req.Name,
+				Version:  version,
+			})
+		}
+
+		c.JSON(http.StatusAccepted, gin.H{
+			"name":        req.Name,
+			"version":     version,
+			"description": req.Description,
+			"lang":        lang,
+			"mode":        "executable",
+			"status":      store.SkillStatusPending,
 		})
 	}
 }

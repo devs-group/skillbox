@@ -190,16 +190,42 @@ func (s *Store) DeleteFile(ctx context.Context, id, tenantID string) error {
 	return nil
 }
 
-// ListFileVersions returns all versions of a file, following the parent_id
-// chain. It finds all files where id = fileID or parent_id = fileID,
-// ordered by version descending. Scoped to tenant_id for isolation.
+// ListFileVersions returns all versions of a file, traversing the full
+// parent_id chain using a recursive CTE. It first resolves the root of
+// the version chain, then collects all descendants. This works correctly
+// for arbitrarily deep version histories. Scoped to tenant_id for isolation.
 func (s *Store) ListFileVersions(ctx context.Context, fileID, tenantID string) ([]*File, error) {
 	rows, err := s.conn().QueryContext(ctx, `
-		SELECT id, tenant_id, session_id, execution_id, name, content_type,
-		       size_bytes, s3_key, version, parent_id, created_at, updated_at
-		FROM sandbox.files
-		WHERE (id = $1 OR parent_id = $1) AND tenant_id = $2
-		ORDER BY version DESC
+		WITH RECURSIVE root AS (
+			-- Find the root of the version chain (the file with no parent,
+			-- or the file itself if it is the root).
+			SELECT id, parent_id
+			FROM sandbox.files
+			WHERE id = $1 AND tenant_id = $2
+			UNION
+			SELECT p.id, p.parent_id
+			FROM sandbox.files p
+			JOIN root r ON p.id = r.parent_id
+			WHERE p.tenant_id = $2
+		),
+		chain AS (
+			-- Now collect the root and all its descendants.
+			SELECT f.id
+			FROM sandbox.files f
+			JOIN root r ON f.id = r.id
+			WHERE r.parent_id IS NULL
+			UNION
+			SELECT f.id
+			FROM sandbox.files f
+			JOIN chain c ON f.parent_id = c.id
+			WHERE f.tenant_id = $2
+		)
+		SELECT f.id, f.tenant_id, f.session_id, f.execution_id, f.name, f.content_type,
+		       f.size_bytes, f.s3_key, f.version, f.parent_id, f.created_at, f.updated_at
+		FROM sandbox.files f
+		JOIN chain c ON f.id = c.id
+		WHERE f.tenant_id = $2
+		ORDER BY f.version DESC
 	`, fileID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list file versions: %w", err)

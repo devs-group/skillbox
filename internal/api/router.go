@@ -11,6 +11,7 @@ import (
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
 	"github.com/devs-group/skillbox/internal/sandbox"
+	"github.com/devs-group/skillbox/internal/scanner"
 	"github.com/devs-group/skillbox/internal/store"
 )
 
@@ -23,7 +24,7 @@ import (
 // The router uses gin.New() (no default middleware) and explicitly adds
 // Recovery and structured RequestLogger middleware so the log output is
 // fully controlled.
-func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, sm *sandbox.SessionManager, col ...*artifacts.Collector) *gin.Engine {
+func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *registry.Registry, sc scanner.Scanner, sm *sandbox.SessionManager, pipeline *scanner.Pipeline, worker *scanner.Worker, col ...*artifacts.Collector) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(middleware.CORSMiddleware())
@@ -44,16 +45,30 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		v1.GET("/executions/:id/logs", handlers.GetExecutionLogs(s))
 
 		// Skill management endpoints
-		v1.POST("/skills", handlers.UploadSkill(reg, s, cfg))
-		v1.POST("/skills/from-fields", handlers.CreateFromFields(reg, s, cfg))
+		v1.POST("/skills", handlers.UploadSkill(reg, s, cfg, sc, worker))
+		v1.POST("/skills/from-fields", handlers.CreateFromFields(reg, s, cfg, worker))
+		v1.POST("/skills/validate", handlers.ValidateSkill(cfg, sc))
 		v1.GET("/skills", handlers.ListSkills(s, reg))
 		v1.GET("/skills/:name/:version", handlers.GetSkill(reg, s))
 		v1.GET("/skills/:name/:version/files", handlers.GetSkillFiles(reg, s))
 		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
 
+		// Scanner admin endpoints — require admin token in addition to API key.
+		admin := v1.Group("/admin")
+		admin.Use(middleware.AdminMiddleware(cfg.AdminToken))
+		{
+			admin.GET("/scanner/stats", handlers.ScannerStats(pipeline))
+			admin.GET("/scanner/patterns", handlers.ScannerGetPatterns(pipeline))
+			admin.PUT("/scanner/patterns", handlers.ScannerSetPatterns(pipeline))
+			admin.GET("/scanner/config", handlers.GetScannerConfig(s))
+			admin.PUT("/scanner/config", handlers.UpdateScannerConfig(s))
+			admin.GET("/skills/review", handlers.ListSkillsForReview(s))
+			admin.PUT("/skills/:name/:version/review", handlers.ReviewSkill(reg, s))
+		}
+
 		// File/artifact endpoints
 		if len(col) > 0 && col[0] != nil {
-			filesHandler := handlers.NewFilesHandler(s, col[0])
+			filesHandler := handlers.NewFilesHandler(s, col[0], cfg.MaxSkillSize)
 			files := v1.Group("/files")
 			{
 				files.POST("", filesHandler.Upload)
@@ -152,7 +167,7 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		ghAuth.Use(middleware.AuthMiddleware(s, cfg.HydraAdminURL))
 		ghAuth.Use(middleware.TenantMiddleware())
 		{
-			ghAuth.POST("/install", handlers.InstallFromGitHub(ghMarketplace))
+			ghAuth.POST("/install", handlers.InstallFromGitHub(ghMarketplace, worker))
 		}
 	}
 

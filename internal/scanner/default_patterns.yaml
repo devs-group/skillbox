@@ -1,0 +1,426 @@
+version: 1
+
+# Block patterns — always reject. Each entry needs: regex, category, description.
+block_patterns:
+  # Reverse shells
+  - regex: '\bnc\s+(-[a-z])*\s*-e\s'
+    category: reverse_shell
+    description: "netcat reverse shell"
+  - regex: '/dev/tcp/'
+    category: reverse_shell
+    description: "bash reverse shell via /dev/tcp"
+  - regex: '\bmkfifo\b.*\bnc\b'
+    category: reverse_shell
+    description: "named pipe reverse shell"
+  - regex: 'bash\s+-i\s+>&\s+/dev/tcp/'
+    category: reverse_shell
+    description: "interactive bash reverse shell"
+  - regex: '\bsocat\b.*\bexec\b'
+    category: reverse_shell
+    description: "socat reverse shell"
+  - regex: '\bpython[23]?\s+-c\s+[''"]import\s+socket'
+    category: reverse_shell
+    description: "python reverse shell"
+
+  # Piped execution
+  - regex: '\bcurl\b[^|]*\|\s*(ba)?sh\b'
+    category: piped_execution
+    description: "curl piped to shell"
+  - regex: '\bwget\b[^|]*\|\s*(ba)?sh\b'
+    category: piped_execution
+    description: "wget piped to shell"
+  - regex: '\bbase64\s+-d\b[^|]*\|\s*(ba)?sh\b'
+    category: piped_execution
+    description: "base64 decoded and piped to shell"
+  - regex: '\bcurl\b[^|]*\|\s*python'
+    category: piped_execution
+    description: "curl piped to python"
+  - regex: '\bwget\b[^|]*\|\s*python'
+    category: piped_execution
+    description: "wget piped to python"
+
+  # Crypto miners
+  - regex: '\bimport\s+(?:hashlib|cryptonight|xmrig|stratum)'
+    category: crypto_miner
+    description: "crypto mining import"
+  - regex: 'stratum\+tcp://'
+    category: crypto_miner
+    description: "mining pool connection"
+  - regex: '\bcoinhive\b'
+    category: crypto_miner
+    description: "coinhive miner reference"
+  - regex: '\bxmr-?stak\b'
+    category: crypto_miner
+    description: "XMR-Stak miner reference"
+
+  # Sandbox escape attempts
+  - regex: '/proc/[0-9]+/ns/'
+    category: sandbox_escape
+    description: "namespace access attempt"
+  - regex: '\bnsenter\b'
+    category: sandbox_escape
+    description: "nsenter container escape"
+  - regex: '\bunshare\b.*--mount'
+    category: sandbox_escape
+    description: "mount namespace escape"
+  - regex: '\bmount\s+-t\s+proc\b'
+    category: sandbox_escape
+    description: "proc mount attempt"
+
+  # Dangerous system operations
+  - regex: '\brm\s+-rf\s+/(?:\s|$)'
+    category: destructive_command
+    description: "recursive root deletion"
+  - regex: ':\(\)\s*\{.*:\|:.*\}\s*;\s*:'
+    category: fork_bomb
+    description: "fork bomb"
+
+# Common block patterns (cross-language)
+common_block_patterns:
+  - regex: '[A-Za-z0-9+/=]{256,}'
+    category: obfuscation
+    description: "large base64-encoded blob"
+
+# Flag patterns — suspicious but possibly legitimate, escalated to deeper tiers.
+flag_patterns:
+  # Process execution
+  - regex: '\bsubprocess\.(?:Popen|call|run|check_output)\b'
+    category: process_execution
+    description: "python subprocess usage"
+  - regex: '\bos\.system\b'
+    category: process_execution
+    description: "python os.system usage"
+  - regex: '\bos\.popen\b'
+    category: process_execution
+    description: "python os.popen usage"
+  - regex: '\bchild_process\b'
+    category: process_execution
+    description: "node child_process usage"
+  - regex: '\bexecSync\b|\bexecFileSync\b|\bspawnSync\b'
+    category: process_execution
+    description: "node sync process execution"
+
+  # Dynamic code execution
+  - regex: '\beval\s*\('
+    category: dynamic_execution
+    description: "eval() usage"
+  - regex: '\bexec\s*\('
+    category: dynamic_execution
+    description: "exec() usage"
+  - regex: '\bFunction\s*\('
+    category: dynamic_execution
+    description: "Function constructor usage"
+  - regex: '\bcompile\s*\('
+    category: dynamic_execution
+    description: "compile() usage"
+
+  # Network operations
+  - regex: '\bsocket\.connect\b'
+    category: network_access
+    description: "python socket connect"
+  - regex: '\bnet\.connect\b'
+    category: network_access
+    description: "node net connect"
+  - regex: '\brequests\.(?:get|post|put|delete|patch)\b'
+    category: network_access
+    description: "python requests HTTP call"
+  - regex: '\burllib\.request\b'
+    category: network_access
+    description: "python urllib request"
+
+  # File system access patterns
+  - regex: '/etc/passwd'
+    category: sensitive_file_access
+    description: "reading /etc/passwd"
+  - regex: '/etc/shadow'
+    category: sensitive_file_access
+    description: "reading /etc/shadow"
+  - regex: '~/.ssh/'
+    category: sensitive_file_access
+    description: "SSH directory access"
+  - regex: '\.env\b'
+    category: sensitive_file_access
+    description: "environment file access"
+
+# Common flag patterns (cross-language)
+common_flag_patterns:
+  - regex: '\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+    category: hardcoded_ip
+    description: "hardcoded IP address"
+
+# Known-malicious packages (exact-match blocklist for dependency scanning).
+blocklist_packages:
+  # Python (PyPI)
+  - colourfool
+  - beautifulsoup
+  - python-binance
+  - cryptowall
+  - noblesse
+  - noblesse2
+  - genesisbot
+  - aryi
+  - suffer
+  - colorwin
+  - httplib2shim
+  - testing123asd
+  - distutils-precedence
+  - piprot
+  - loglib-modules
+  - pygrata
+  - pygrata-utils
+  - hkg-sol-utils
+  - performance-hawk
+  - ultratools
+  # Node.js (npm)
+  - event-stream
+  - flatmap-stream
+  - ua-parser-js-malware
+  - colors-malware
+  - faker-malware
+  - node-ipc-malware
+  - peacenotwar
+  - is-promise-malware
+  - electorn
+  - crossenv
+  - mongose
+  - d3.js
+  - gruntcli
+  - http-proxy.js
+  - proxy.js
+  - shadowsock
+  - smb
+  - nodesass
+  - discordjs
+  - discord-js
+  - disc0rd.js
+  - discord.js-selfbot
+
+# Popular packages corpus for typosquatting detection (Levenshtein distance).
+popular_packages:
+  # Python (PyPI)
+  - requests
+  - boto3
+  - urllib3
+  - setuptools
+  - pip
+  - wheel
+  - certifi
+  - idna
+  - charset-normalizer
+  - typing-extensions
+  - numpy
+  - pandas
+  - botocore
+  - s3transfer
+  - six
+  - python-dateutil
+  - pyyaml
+  - cryptography
+  - jmespath
+  - packaging
+  - cffi
+  - pycparser
+  - attrs
+  - markupsafe
+  - jinja2
+  - pygments
+  - pyasn1
+  - rsa
+  - colorama
+  - click
+  - flask
+  - django
+  - sqlalchemy
+  - pillow
+  - scipy
+  - matplotlib
+  - scikit-learn
+  - tensorflow
+  - torch
+  - pytest
+  - tqdm
+  - aiohttp
+  - pydantic
+  - fastapi
+  - uvicorn
+  - celery
+  - redis
+  - psycopg2
+  - psycopg2-binary
+  - pymongo
+  - sqlparse
+  - beautifulsoup4
+  - lxml
+  - httpx
+  - grpcio
+  - protobuf
+  - pyopenssl
+  - paramiko
+  - websocket-client
+  - websockets
+  - twisted
+  - scrapy
+  - selenium
+  - black
+  - flake8
+  - mypy
+  - isort
+  - pyjwt
+  - python-dotenv
+  - gunicorn
+  - rich
+  - httptools
+  - toml
+  - tomli
+  - filelock
+  - wrapt
+  - docutils
+  - importlib-metadata
+  - zipp
+  - decorator
+  - jsonschema
+  - pytz
+  - babel
+  - more-itertools
+  - pluggy
+  - soupsieve
+  - pathlib2
+  - future
+  - chardet
+  - arrow
+  - simplejson
+  - ujson
+  - orjson
+  - boto
+  - awscli
+  - aws-cdk-lib
+  - google-cloud-storage
+  - google-auth
+  - google-api-python-client
+  - openai
+  - langchain
+  - anthropic
+  - transformers
+  - huggingface-hub
+  # Node.js (npm)
+  - express
+  - lodash
+  - react
+  - react-dom
+  - axios
+  - chalk
+  - commander
+  - debug
+  - moment
+  - webpack
+  - typescript
+  - eslint
+  - prettier
+  - next
+  - vue
+  - angular
+  - jquery
+  - underscore
+  - async
+  - bluebird
+  - request
+  - node-fetch
+  - glob
+  - minimatch
+  - minimist
+  - yargs
+  - inquirer
+  - fs-extra
+  - mkdirp
+  - rimraf
+  - semver
+  - uuid
+  - dotenv
+  - cross-env
+  - concurrently
+  - nodemon
+  - pm2
+  - mongoose
+  - sequelize
+  - pg
+  - mysql2
+  - ioredis
+  - socket.io
+  - ws
+  - cors
+  - helmet
+  - body-parser
+  - cookie-parser
+  - jsonwebtoken
+  - bcrypt
+  - bcryptjs
+  - passport
+  - multer
+  - sharp
+  - jimp
+  - puppeteer
+  - playwright
+  - jest
+  - mocha
+  - chai
+  - sinon
+  - supertest
+  - rollup
+  - vite
+  - esbuild
+  - tailwindcss
+  - postcss
+  - sass
+  - less
+  - styled-components
+  - emotion
+  - d3
+  - three
+  - electron
+  - discord.js
+  - node-sass
+  - http-proxy
+  - grunt-cli
+  - grunt
+  - gulp
+  - colors
+  - faker
+  - ora
+  - boxen
+  - got
+  - ky
+  - execa
+  - zod
+  - ajv
+  - joi
+  - date-fns
+  - dayjs
+  - luxon
+  - rxjs
+  - ramda
+  - immutable
+  - immer
+  - zustand
+  - mobx
+  - redux
+  - pnpm
+  - yarn
+  - npm
+  - lerna
+  - turbo
+  - nx
+  - prisma
+  - drizzle-orm
+  - knex
+  - typeorm
+  - fastify
+  - koa
+  - hapi
+  - nest
+  - "@nestjs/core"
+  - "@angular/core"
+  - "@vue/cli"
+  - create-react-app
+  - svelte
+  - solid-js
+  - htmx

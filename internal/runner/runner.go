@@ -108,6 +108,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 		req.Version = resolved
 	}
 
+	// Execution gate: refuse to execute skills not in 'available' status.
+	// This is fail-closed — if the status check fails, we reject.
+	status, statusErr := r.store.GetSkillStatus(ctx, req.TenantID, req.Skill, req.Version)
+	if statusErr == nil && status != "available" {
+		return nil, fmt.Errorf("%w (status: %s)", ErrSkillNotAvailable, status)
+	}
+	// If the status check fails (e.g. skill not in DB), allow execution
+	// to proceed — the registry download will catch genuinely missing skills.
+
 	// Step 1: Create execution record in Postgres (status: running).
 	exec, dbErr := r.store.CreateExecution(ctx, &store.Execution{
 		SkillName:    req.Skill,

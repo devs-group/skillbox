@@ -500,7 +500,7 @@ func TestListFileVersions_ReturnsVersionChain(t *testing.T) {
 	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	rootID := "file-root"
 
-	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
+	mock.ExpectQuery("WITH RECURSIVE root AS").
 		WithArgs("file-root", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns).
 			AddRow("file-v2", "tenant-1", "sess-1", "exec-1", "report.csv", "text/csv",
@@ -543,7 +543,7 @@ func TestListFileVersions_Empty(t *testing.T) {
 
 	s := &Store{db: db}
 
-	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
+	mock.ExpectQuery("WITH RECURSIVE root AS").
 		WithArgs("nonexistent", "tenant-1").
 		WillReturnRows(sqlmock.NewRows(fileColumns))
 
@@ -569,7 +569,7 @@ func TestListFileVersions_DBError(t *testing.T) {
 
 	s := &Store{db: db}
 
-	mock.ExpectQuery("SELECT id, tenant_id, session_id, execution_id, name, content_type").
+	mock.ExpectQuery("WITH RECURSIVE root AS").
 		WillReturnError(context.DeadlineExceeded)
 
 	_, err = s.ListFileVersions(context.Background(), "file-root", "tenant-1")
