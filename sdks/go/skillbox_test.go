@@ -1247,7 +1247,7 @@ func TestUpsertSkillFromFields_Success(t *testing.T) {
 			Lang:        gotBody.Lang,
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test-key", WithTenant("tenant-42"))
 	result, err := client.UpsertSkillFromFields(context.Background(), CreateFromFieldsRequest{
@@ -1298,7 +1298,7 @@ func TestUpsertSkillFromFields_ValidationError(t *testing.T) {
 			Message:   "name is required",
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test-key")
 	_, err := client.UpsertSkillFromFields(context.Background(), CreateFromFieldsRequest{
@@ -1328,7 +1328,7 @@ func TestUpsertSkillFromFields_ServerError(t *testing.T) {
 			Message:   "database unavailable",
 		})
 	}))
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	client := New(srv.URL, "sk-test-key")
 	_, err := client.UpsertSkillFromFields(context.Background(), CreateFromFieldsRequest{

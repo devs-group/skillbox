@@ -65,7 +65,7 @@ func (s *Store) ListUsers(ctx context.Context, tenantID string) ([]*User, error)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var users []*User
 	for rows.Next() {

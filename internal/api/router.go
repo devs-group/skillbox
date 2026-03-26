@@ -103,6 +103,8 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 				sbGroup.POST("/list-dir", sandboxHandler.ListDir)
 				sbGroup.POST("/sync", sandboxHandler.Sync)
 				sbGroup.POST("/upload-skill", sandboxHandler.UploadSkill)
+				sbGroup.POST("/upload-file", sandboxHandler.UploadFile)
+				sbGroup.POST("/download-file", sandboxHandler.DownloadFile)
 				sbGroup.DELETE("/:session", sandboxHandler.Destroy)
 			}
 		}

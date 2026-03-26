@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -393,4 +395,79 @@ func (h *SandboxHandler) UploadSkill(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, UploadSkillResponse{Files: uploadedPaths})
+}
+
+// UploadFile handles POST /v1/sandbox/upload-file.
+// Accepts a multipart form with "path" (target sandbox path) and "file" (binary content).
+// Binary-safe alternative to WriteFile which transports content as a JSON string.
+func (h *SandboxHandler) UploadFile(c *gin.Context) {
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
+		return
+	}
+
+	sandboxPath := c.PostForm("path")
+	if sandboxPath == "" {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "path form field is required")
+		return
+	}
+	if err := sandbox.ValidateSandboxPath(sandboxPath); err != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "invalid path: "+err.Error())
+		return
+	}
+
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "file form field is required: "+err.Error())
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "failed to read file: "+err.Error())
+		return
+	}
+
+	if uploadErr := h.manager.UploadFiles(c.Request.Context(), key, []sandbox.FileUpload{
+		{Path: sandboxPath, Content: data, Mode: 0o644},
+	}); uploadErr != nil {
+		response.RespondError(c, http.StatusInternalServerError, "upload_error", "failed to upload file to sandbox: "+uploadErr.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "path": sandboxPath, "size": len(data)})
+}
+
+// DownloadFile handles POST /v1/sandbox/download-file.
+// Returns the raw binary file content with appropriate Content-Type.
+// Binary-safe alternative to ReadFile which wraps content in a JSON string.
+func (h *SandboxHandler) DownloadFile(c *gin.Context) {
+	key, ok := h.resolveSessionKey(c)
+	if !ok {
+		return
+	}
+
+	var req SandboxReadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "invalid request body: "+err.Error())
+		return
+	}
+	if req.Path == "" {
+		response.RespondError(c, http.StatusBadRequest, "bad_request", "path is required")
+		return
+	}
+
+	data, err := h.manager.ReadFile(c.Request.Context(), key, req.Path)
+	if err != nil {
+		response.RespondError(c, http.StatusBadRequest, "read_error", "failed to read file: "+err.Error())
+		return
+	}
+
+	contentType := mime.TypeByExtension(filepath.Ext(req.Path))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	c.Data(http.StatusOK, contentType, data)
 }
