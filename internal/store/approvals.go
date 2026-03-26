@@ -80,7 +80,7 @@ func (s *Store) ListApprovalRequests(ctx context.Context, tenantID, status strin
 	if err != nil {
 		return nil, fmt.Errorf("list approval requests: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var results []*ApprovalRequest
 	for rows.Next() {

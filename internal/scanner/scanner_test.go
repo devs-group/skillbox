@@ -61,13 +61,6 @@ func buildZip(t *testing.T, files map[string]string) *zip.Reader {
 	return r
 }
 
-// buildZipWithSize creates a ZIP with a single file of the given uncompressed size.
-func buildZipWithSize(t *testing.T, name string, size int) *zip.Reader {
-	t.Helper()
-	content := strings.Repeat("A", size)
-	return buildZip(t, map[string]string{name: content})
-}
-
 // buildZipManyEntries creates a ZIP with n empty files.
 func buildZipManyEntries(t *testing.T, n int) *zip.Reader {
 	t.Helper()
@@ -184,8 +177,8 @@ func TestCheckZIPSafety_Symlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create symlink entry: %v", err)
 	}
-	fw.Write([]byte("/etc/passwd"))
-	w.Close()
+	_, _ = fw.Write([]byte("/etc/passwd"))
+	_ = w.Close()
 
 	data := buf.Bytes()
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"time"
 
 	"github.com/devs-group/skillbox/internal/skill"
 )
@@ -287,5 +286,3 @@ func parseSkillFromZip(zr *zip.Reader) (*skill.Skill, error) {
 	return nil, fmt.Errorf("SKILL.md not found in archive")
 }
 
-// workerScanTimeout is the max time for a single scan job.
-const workerScanTimeout = 60 * time.Second

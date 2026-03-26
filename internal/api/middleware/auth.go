@@ -234,7 +234,7 @@ func introspectToken(introspectURL, token string) (*introspectionResponse, error
 	if err != nil {
 		return nil, fmt.Errorf("introspection request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("introspection returned %d", resp.StatusCode)

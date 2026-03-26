@@ -313,7 +313,8 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 		}
 	}
 
-	if bestDist == 1 {
+	switch bestDist {
+	case 1:
 		findings = append(findings, Finding{
 			Stage:       stageNameDeps,
 			Severity:    SeverityBlock,
@@ -323,7 +324,7 @@ func (ds *depsStage) checkPackageName(pkg, filePath string) []Finding {
 			Remediation: fmt.Sprintf("Did you mean '%s'? The package '%s' is very similar to a popular package and may be a typosquatting attack. Fix the package name.", bestPopular, pkg),
 			IssueCode:   "E006",
 		})
-	} else if bestDist == 2 {
+	case 2:
 		findings = append(findings, Finding{
 			Stage:       stageNameDeps,
 			Severity:    SeverityFlag,

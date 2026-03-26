@@ -55,15 +55,15 @@ func (r *ScanResult) GenerateSummary() string {
 	}
 
 	for i, f := range r.Findings {
-		b.WriteString(fmt.Sprintf("  %d. [%s] %s", i+1, f.Severity, f.Description))
+		fmt.Fprintf(&b, "  %d. [%s] %s", i+1, f.Severity, f.Description)
 		if f.IssueCode != "" {
-			b.WriteString(fmt.Sprintf(" (%s)", f.IssueCode))
+			fmt.Fprintf(&b, " (%s)", f.IssueCode)
 		}
 		b.WriteString("\n")
 		if f.FilePath != "" {
-			b.WriteString(fmt.Sprintf("     File: %s", f.FilePath))
+			fmt.Fprintf(&b, "     File: %s", f.FilePath)
 			if f.Line > 0 {
-				b.WriteString(fmt.Sprintf(":%d", f.Line))
+				fmt.Fprintf(&b, ":%d", f.Line)
 			}
 			b.WriteString("\n")
 		}

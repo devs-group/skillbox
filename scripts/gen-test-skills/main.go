@@ -18,7 +18,7 @@ type testSkill struct {
 
 func main() {
 	outDir := filepath.Join("scripts", "gen-test-skills", "out")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir: %v\n", err)
 		os.Exit(1)
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -321,26 +320,6 @@ func collectFlags(findings []Finding) []Finding {
 		}
 	}
 	return flags
-}
-
-// hasDependencyFiles checks if the ZIP contains any dependency manifest files
-// that warrant Tier 2 deep scanning even if Tier 1 produced no flags.
-func hasDependencyFiles(zr *zip.Reader) bool {
-	for _, f := range zr.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		name := strings.TrimPrefix(f.Name, "./")
-		switch {
-		case name == "requirements.txt" || strings.HasSuffix(name, "/requirements.txt"):
-			return true
-		case name == "package.json" || strings.HasSuffix(name, "/package.json"):
-			return true
-		case name == "pyproject.toml" || strings.HasSuffix(name, "/pyproject.toml"):
-			return true
-		}
-	}
-	return false
 }
 
 func verdictString(pass bool) string {
