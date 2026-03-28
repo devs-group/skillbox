@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/devs-group/skillbox/internal/api/response"
+	"github.com/devs-group/skillbox/internal/store"
 )
 
 // TestTenantMiddleware_SetsFromContext verifies that the tenant ID set by
@@ -100,6 +101,65 @@ func TestTenantMiddleware_MismatchedHeader(t *testing.T) {
 
 	if !c.IsAborted() {
 		t.Error("expected context to be aborted on tenant mismatch")
+	}
+}
+
+// TestTenantMiddleware_ServiceKeyBypass verifies that a service key can
+// assume a different tenant via X-Tenant-ID without getting a 403.
+func TestTenantMiddleware_ServiceKeyBypass(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Request.Header.Set("X-Tenant-ID", "org-abc-123")
+
+	// Simulate AuthMiddleware: key belongs to "vectorchat-service" but is a service key.
+	c.Set(ContextKeyTenantID, "vectorchat-service")
+	c.Set(ContextKeyAPIKey, &store.APIKey{
+		ID:        "key-1",
+		TenantID:  "vectorchat-service",
+		IsService: true,
+	})
+
+	handler := TenantMiddleware()
+	handler(c)
+
+	if c.IsAborted() {
+		t.Error("service key should not be aborted on tenant mismatch")
+	}
+
+	got := GetTenantID(c)
+	if got != "org-abc-123" {
+		t.Errorf("tenant_id = %q, want %q (header value)", got, "org-abc-123")
+	}
+}
+
+// TestTenantMiddleware_NonServiceKeyStillBlocked verifies that a regular key
+// with mismatched X-Tenant-ID still gets 403.
+func TestTenantMiddleware_NonServiceKeyStillBlocked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Request.Header.Set("X-Tenant-ID", "org-abc-123")
+
+	c.Set(ContextKeyTenantID, "tenant-abc-123")
+	c.Set(ContextKeyAPIKey, &store.APIKey{
+		ID:        "key-2",
+		TenantID:  "tenant-abc-123",
+		IsService: false,
+	})
+
+	handler := TenantMiddleware()
+	handler(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if !c.IsAborted() {
+		t.Error("non-service key should be aborted on tenant mismatch")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/devs-group/skillbox/internal/api/response"
+	"github.com/devs-group/skillbox/internal/store"
 )
 
 // TenantMiddleware reads the tenant_id set by AuthMiddleware and, if the
@@ -33,17 +34,20 @@ func TenantMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// If the client explicitly sends X-Tenant-ID, it must match the
-		// tenant derived from the API key. This guards against accidental
-		// or malicious cross-tenant requests.
-		if headerTenant := c.GetHeader("X-Tenant-ID"); headerTenant != "" && headerTenant != keyTenant {
+		headerTenant := c.GetHeader("X-Tenant-ID")
+
+		// Service keys (e.g. VectorChat) may assume any tenant via X-Tenant-ID.
+		if headerTenant != "" && headerTenant != keyTenant {
+			if isServiceKey(c) {
+				c.Set(ContextKeyTenantID, headerTenant)
+				c.Next()
+				return
+			}
 			response.RespondError(c, http.StatusForbidden, "forbidden", "X-Tenant-ID header does not match the API key's tenant")
 			c.Abort()
 			return
 		}
 
-		// Re-set the canonical tenant_id so downstream handlers have a
-		// single, authoritative source.
 		c.Set(ContextKeyTenantID, keyTenant)
 		c.Next()
 	}
@@ -58,4 +62,15 @@ func GetTenantID(c *gin.Context) string {
 		panic("middleware: tenant_id not in context — is TenantMiddleware registered?")
 	}
 	return v.(string)
+}
+
+// isServiceKey returns true if the request was authenticated with a service API key.
+// Service keys are trusted to assume any tenant via X-Tenant-ID.
+func isServiceKey(c *gin.Context) bool {
+	v, exists := c.Get(ContextKeyAPIKey)
+	if !exists {
+		return false
+	}
+	key, ok := v.(*store.APIKey)
+	return ok && key.IsService
 }

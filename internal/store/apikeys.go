@@ -14,6 +14,7 @@ type APIKey struct {
 	KeyHash   string
 	TenantID  string
 	Name      string
+	IsService bool
 	CreatedAt time.Time
 	RevokedAt *time.Time
 }
@@ -28,11 +29,11 @@ var ErrNotFound = errors.New("not found")
 func (s *Store) ValidateKey(ctx context.Context, keyHash string) (*APIKey, error) {
 	k := &APIKey{}
 	err := s.conn().QueryRowContext(ctx,
-		`SELECT id, key_hash, tenant_id, name, created_at, revoked_at
+		`SELECT id, key_hash, tenant_id, name, is_service, created_at, revoked_at
 		   FROM sandbox.api_keys
 		  WHERE key_hash = $1`,
 		keyHash,
-	).Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.CreatedAt, &k.RevokedAt)
+	).Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.IsService, &k.CreatedAt, &k.RevokedAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -56,9 +57,9 @@ func (s *Store) CreateKey(ctx context.Context, tenantID, name, keyHash string) (
 	err := s.conn().QueryRowContext(ctx,
 		`INSERT INTO sandbox.api_keys (key_hash, tenant_id, name)
 		 VALUES ($1, $2, $3)
-		 RETURNING id, key_hash, tenant_id, name, created_at, revoked_at`,
+		 RETURNING id, key_hash, tenant_id, name, is_service, created_at, revoked_at`,
 		keyHash, tenantID, name,
-	).Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.CreatedAt, &k.RevokedAt)
+	).Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.IsService, &k.CreatedAt, &k.RevokedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create key: %w", err)
 	}
@@ -70,7 +71,7 @@ func (s *Store) CreateKey(ctx context.Context, tenantID, name, keyHash string) (
 // caller can display their status.
 func (s *Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
 	rows, err := s.conn().QueryContext(ctx,
-		`SELECT id, key_hash, tenant_id, name, created_at, revoked_at
+		`SELECT id, key_hash, tenant_id, name, is_service, created_at, revoked_at
 		   FROM sandbox.api_keys
 		  WHERE tenant_id = $1
 		  ORDER BY created_at DESC`,
@@ -84,7 +85,7 @@ func (s *Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error)
 	var keys []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.CreatedAt, &k.RevokedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.IsService, &k.CreatedAt, &k.RevokedAt); err != nil {
 			return nil, fmt.Errorf("scan key row: %w", err)
 		}
 		keys = append(keys, k)
@@ -125,10 +126,10 @@ func (s *Store) RevokeKey(ctx context.Context, keyID string) error {
 func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKey, error) {
 	k := &APIKey{}
 	err := s.conn().QueryRowContext(ctx, `
-		SELECT id, key_hash, tenant_id, name, created_at, revoked_at
+		SELECT id, key_hash, tenant_id, name, is_service, created_at, revoked_at
 		FROM sandbox.api_keys
 		WHERE key_hash = $1
-	`, hash).Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.CreatedAt, &k.RevokedAt)
+	`, hash).Scan(&k.ID, &k.KeyHash, &k.TenantID, &k.Name, &k.IsService, &k.CreatedAt, &k.RevokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
