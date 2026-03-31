@@ -208,6 +208,19 @@ func (sm *SessionManager) createSandbox(ctx context.Context, tenantID, externalI
 		return nil, fmt.Errorf("session manager: discover execd: %w", err)
 	}
 
+	// Wait for ExecD to be reachable before using it. The container may be
+	// "Running" but the ExecD process inside needs a few hundred ms to bind
+	// its port. Without this gate, the first operation (placeholder dirs)
+	// fails with EOF because the proxy has nothing to connect to yet.
+	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer readyCancel()
+	if err := sm.client.WaitExecDReady(readyCtx, execdURL); err != nil {
+		slog.Warn("session manager: execd readiness timeout, proceeding anyway",
+			"sandbox_id", sbResp.ID,
+			"error", err,
+		)
+	}
+
 	// Create sandbox directory structure — everything under /sandbox/session/.
 	placeholders := []FileUpload{
 		{Path: "/sandbox/session/.keep", Content: []byte(""), Mode: 0o644},
@@ -511,7 +524,8 @@ func isConnectionError(err error) bool {
 	return strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "no such host") ||
-		strings.Contains(msg, "i/o timeout")
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "EOF")
 }
 
 // SyncSessionFiles downloads files from /sandbox/out/session/ and
@@ -681,12 +695,31 @@ func (sm *SessionManager) syncAndRemove(ctx context.Context, key, caller string)
 
 	if ok {
 		if err := sm.client.DeleteSandbox(ctx, ms.SandboxID); err != nil {
-			slog.Warn("session manager: "+caller+" delete sandbox failed",
-				"sandbox_id", ms.SandboxID,
-				"error", err,
-			)
+			// OpenSandbox may garbage-collect containers before our idle
+			// TTL fires. A 404 means the sandbox is already gone — that's
+			// the outcome we wanted, so just log at debug level.
+			if isSandboxGone(err) {
+				slog.Debug("session manager: "+caller+" sandbox already removed",
+					"sandbox_id", ms.SandboxID,
+				)
+			} else {
+				slog.Warn("session manager: "+caller+" delete sandbox failed",
+					"sandbox_id", ms.SandboxID,
+					"error", err,
+				)
+			}
 		}
 	}
+}
+
+// isSandboxGone returns true if the error indicates the sandbox no longer
+// exists in OpenSandbox (HTTP 404 / SANDBOX_NOT_FOUND).
+func isSandboxGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "status 404") || strings.Contains(msg, "SANDBOX_NOT_FOUND")
 }
 
 // Destroy tears down a specific session sandbox. It syncs files first,

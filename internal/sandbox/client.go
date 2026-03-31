@@ -216,6 +216,31 @@ func (c *Client) WaitReady(ctx context.Context, id string) (*SandboxResponse, er
 	}
 }
 
+// WaitExecDReady polls the ExecD ping endpoint until it responds or the
+// context expires. This bridges the gap between OpenSandbox reporting a
+// container as "Running" and the ExecD process inside actually binding
+// its port. Backoff starts at 100ms and doubles up to 800ms, giving up
+// after ~3s of cumulative waiting in the default case.
+func (c *Client) WaitExecDReady(ctx context.Context, execdURL string) error {
+	delay := 100 * time.Millisecond
+	for {
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := c.Ping(pingCtx, execdURL)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("opensandbox: execd not ready: %w", ctx.Err())
+		case <-time.After(delay):
+		}
+		if delay < 800*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
 // Ping performs a health check against the ExecD instance.
 func (c *Client) Ping(ctx context.Context, execdURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimURL(execdURL)+"/ping", nil)
