@@ -21,7 +21,7 @@ import (
 
 // apiKeyColumns mirrors the SELECT column order in store.GetAPIKeyByHash.
 var apiKeyColumns = []string{
-	"id", "key_hash", "tenant_id", "name", "created_at", "revoked_at",
+	"id", "key_hash", "tenant_id", "name", "is_service", "created_at", "revoked_at",
 }
 
 // fileColumns mirrors the SELECT column order in store.GetFile / ListFiles.
@@ -88,10 +88,10 @@ func setupRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock, func()) {
 func expectAuthLookup(mock sqlmock.Sqlmock, token string) {
 	hash := tokenHash(token)
 	now := time.Now()
-	mock.ExpectQuery("SELECT id, key_hash, tenant_id, name, created_at, revoked_at").
+	mock.ExpectQuery("SELECT id, key_hash, tenant_id, name, is_service, created_at, revoked_at").
 		WithArgs(hash).
 		WillReturnRows(sqlmock.NewRows(apiKeyColumns).
-			AddRow(testKeyID, hash, testTenantID, "test-key", now, nil))
+			AddRow(testKeyID, hash, testTenantID, "test-key", false, now, nil))
 }
 
 // expectAuthLookupRevoked sets up a mock expectation that returns a key
@@ -100,17 +100,17 @@ func expectAuthLookupRevoked(mock sqlmock.Sqlmock, token string) {
 	hash := tokenHash(token)
 	now := time.Now()
 	revoked := now.Add(-time.Hour)
-	mock.ExpectQuery("SELECT id, key_hash, tenant_id, name, created_at, revoked_at").
+	mock.ExpectQuery("SELECT id, key_hash, tenant_id, name, is_service, created_at, revoked_at").
 		WithArgs(hash).
 		WillReturnRows(sqlmock.NewRows(apiKeyColumns).
-			AddRow(testKeyID, hash, testTenantID, "test-key", now, &revoked))
+			AddRow(testKeyID, hash, testTenantID, "test-key", false, now, &revoked))
 }
 
 // expectAuthLookupNotFound sets up a mock expectation that returns zero
 // rows, simulating an unknown API key.
 func expectAuthLookupNotFound(mock sqlmock.Sqlmock, token string) {
 	hash := tokenHash(token)
-	mock.ExpectQuery("SELECT id, key_hash, tenant_id, name, created_at, revoked_at").
+	mock.ExpectQuery("SELECT id, key_hash, tenant_id, name, is_service, created_at, revoked_at").
 		WithArgs(hash).
 		WillReturnRows(sqlmock.NewRows(apiKeyColumns))
 }
