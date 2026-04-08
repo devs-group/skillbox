@@ -878,16 +878,13 @@ func DeleteSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			version = resolved
 		}
 
-		if err := reg.Delete(c.Request.Context(), tenantID, name, version); err != nil {
-			if errors.Is(err, registry.ErrSkillNotFound) {
-				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@"+version)
-				return
-			}
+		// Best-effort removal from S3 — ignore "not found" (already gone).
+		if err := reg.Delete(c.Request.Context(), tenantID, name, version); err != nil && !errors.Is(err, registry.ErrSkillNotFound) {
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to delete skill: "+err.Error())
 			return
 		}
 
-		// Best-effort cleanup of the metadata record.
+		// Always clean up the DB record.
 		_ = s.DeleteSkill(c.Request.Context(), tenantID, name, version)
 
 		c.Status(http.StatusNoContent)
