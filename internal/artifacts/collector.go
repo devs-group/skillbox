@@ -77,7 +77,7 @@ func (c *Collector) Collect(ctx context.Context, tenantID, executionID, filesDir
 	}
 
 	// Upload to MinIO.
-	key := fmt.Sprintf("%s/%s/files.tar.gz", tenantID, executionID)
+	key := fmt.Sprintf("%s/executions/%s/files.tar.gz", tenantID, executionID)
 	_, err = c.client.PutObject(ctx, c.bucket, key, archive, int64(archive.Len()), minio.PutObjectOptions{
 		ContentType: "application/gzip",
 	})

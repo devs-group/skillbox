@@ -62,7 +62,7 @@ func (h *FilesHandler) Upload(c *gin.Context) {
 	}
 
 	fileUUID := uuid.New().String()
-	s3Key := fmt.Sprintf("%s/uploads/%s/%s", tenantID, fileUUID, name)
+	s3Key := fmt.Sprintf("%s/files/%s/%s", tenantID, fileUUID, name)
 
 	uploadedSize, uploadErr := h.collector.UploadObject(c.Request.Context(), s3Key, upload, header.Size, contentType)
 	if uploadErr != nil {
@@ -215,7 +215,7 @@ func (h *FilesHandler) Update(c *gin.Context) {
 	defer upload.Close() //nolint:errcheck
 
 	newVersion := existing.Version + 1
-	newS3Key := fmt.Sprintf("%s/%s/v%d/%s", existing.TenantID, existing.ExecutionID, newVersion, existing.Name)
+	newS3Key := fmt.Sprintf("%s/files/%s/v%d/%s", existing.TenantID, existing.ExecutionID, newVersion, existing.Name)
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = detectContentType(existing.Name)

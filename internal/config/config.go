@@ -21,8 +21,8 @@ type Config struct {
 	S3Endpoint        string
 	S3AccessKey       string
 	S3SecretKey       string
-	S3BucketSkills    string
-	S3BucketExecs     string
+	S3BucketSkills string
+	S3BucketExecs  string
 	S3UseSSL          bool
 
 	// OpenSandbox

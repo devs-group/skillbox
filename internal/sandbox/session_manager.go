@@ -591,7 +591,7 @@ func (sm *SessionManager) SyncSessionFiles(ctx context.Context, key string) erro
 			}
 
 			// Upload to MinIO.
-			s3Key := fmt.Sprintf("sessions/%s/%s/%s", ms.TenantID, ms.SessionID, name)
+			s3Key := fmt.Sprintf("%s/sessions/%s/%s", ms.TenantID, ms.ExternalID, name)
 			_, err = sm.artifacts.UploadObject(ctx, s3Key, bytes.NewReader(data), int64(len(data)), "application/octet-stream")
 			if err != nil {
 				slog.Warn("session manager: sync upload to minio failed",

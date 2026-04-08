@@ -66,17 +66,17 @@ func New(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*Registry,
 
 // objectPath returns the S3 key for a skill archive.
 func objectPath(tenantID, skillName, version string) string {
-	return path.Join(tenantID, skillName, version, "skill.zip")
+	return path.Join(tenantID, "skills", skillName, version, "skill.zip")
 }
 
 // pendingPath returns the S3 key for a pending (pre-scan) skill archive.
 func pendingPath(tenantID, skillName, version string) string {
-	return path.Join(tenantID, ".pending", skillName, version, "skill.zip")
+	return path.Join(tenantID, "skills", ".pending", skillName, version, "skill.zip")
 }
 
 // quarantinePath returns the S3 key for a quarantined skill archive.
 func quarantinePath(tenantID, skillName, version string) string {
-	return path.Join(tenantID, ".quarantine", skillName, version, "skill.zip")
+	return path.Join(tenantID, "skills", ".quarantine", skillName, version, "skill.zip")
 }
 
 // Upload stores a skill zip archive in the registry after validating that
@@ -279,7 +279,7 @@ func (r *Registry) ResolveLatest(ctx context.Context, tenantID, skillName string
 		return "", fmt.Errorf("tenantID and skillName are required")
 	}
 
-	prefix := path.Join(tenantID, skillName) + "/"
+	prefix := path.Join(tenantID, "skills", skillName) + "/"
 	var latest string
 	var latestTime time.Time
 
@@ -294,7 +294,7 @@ func (r *Registry) ResolveLatest(ctx context.Context, tenantID, skillName string
 			continue
 		}
 
-		// Extract version from path: {tenantID}/{skillName}/{version}/skill.zip
+		// Extract version from path: {tenantID}/skills/{skillName}/{version}/skill.zip
 		relative := strings.TrimPrefix(obj.Key, prefix)
 		version := strings.TrimSuffix(relative, "/skill.zip")
 
@@ -319,7 +319,7 @@ func (r *Registry) List(ctx context.Context, tenantID string) ([]SkillMeta, erro
 		return nil, fmt.Errorf("tenantID is required")
 	}
 
-	prefix := tenantID + "/"
+	prefix := path.Join(tenantID, "skills") + "/"
 	var skills []SkillMeta
 
 	for obj := range r.client.ListObjects(ctx, r.bucket, minio.ListObjectsOptions{
@@ -330,7 +330,7 @@ func (r *Registry) List(ctx context.Context, tenantID string) ([]SkillMeta, erro
 			return nil, fmt.Errorf("listing objects with prefix %q: %w", prefix, obj.Err)
 		}
 
-		// Expected key format: {tenantID}/{skillName}/{version}/skill.zip
+		// Expected key format: {tenantID}/skills/{skillName}/{version}/skill.zip
 		if !strings.HasSuffix(obj.Key, "/skill.zip") {
 			continue
 		}
