@@ -2,8 +2,6 @@ name: Lint & Test
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
