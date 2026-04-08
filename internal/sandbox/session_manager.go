@@ -563,6 +563,10 @@ func (sm *SessionManager) SyncSessionFiles(ctx context.Context, key string) erro
 			if f.Size == 0 {
 				continue
 			}
+			// Skip drive files — already persisted by aigent's Agent Drive.
+			if strings.Contains(f.Path, "/drive/") {
+				continue
+			}
 
 			rc, err := sm.client.DownloadFile(ctx, ms.ExecDURL, f.Path)
 			if err != nil {
