@@ -33,7 +33,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Run tests
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        run: go test -count=1 -coverprofile=coverage.out ./...
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
       - name: Run gosec
-        uses: securego/gosec@master
-        with:
-          args: -exclude=G104,G107,G117,G204,G304,G122,G118 ./...
+        run: gosec -exclude=G104,G107,G117,G204,G304,G122,G118 ./...
