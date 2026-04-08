@@ -490,7 +490,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 					// Upload individual files and create DB records.
 					fileSizes := make(map[string]int64, len(filesList))
 					for _, fileName := range filesList {
-						s3Key := fmt.Sprintf("%s/%s/%s", req.TenantID, executionID, fileName)
+						s3Key := fmt.Sprintf("%s/executions/%s/%s", req.TenantID, executionID, fileName)
 						filePath := filepath.Join(tmpDir, fileName)
 						f, openErr := os.Open(filePath)
 						if openErr != nil {
@@ -510,7 +510,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 					}
 
 					for _, fileName := range filesList {
-						s3Key := fmt.Sprintf("%s/%s/%s", req.TenantID, executionID, fileName)
+						s3Key := fmt.Sprintf("%s/executions/%s/%s", req.TenantID, executionID, fileName)
 						fileRecord := &store.File{
 							TenantID:    req.TenantID,
 							ExecutionID: executionID,
@@ -565,7 +565,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (result *RunResult, er
 						continue
 					}
 
-					s3Key := fmt.Sprintf("%s/sessions/%s/%s", req.TenantID, dbSession.ID, filename)
+					s3Key := fmt.Sprintf("%s/sessions/%s/%s", req.TenantID, req.SessionID, filename)
 					if _, upErr := r.artifacts.UploadObject(ctx, s3Key, bytes.NewReader(data), int64(len(data)), detectRunnerContentType(filename)); upErr != nil {
 						log.Printf("runner: failed to upload session file %s: %v", filename, upErr)
 						continue
