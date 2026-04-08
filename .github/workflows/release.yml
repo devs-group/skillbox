@@ -48,6 +48,9 @@ jobs:
           context: .
           file: deploy/docker/Dockerfile
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
           tags: |
             ghcr.io/devs-group/skillbox:${{ github.ref_name }}
             ghcr.io/devs-group/skillbox:latest

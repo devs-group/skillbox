@@ -12,9 +12,12 @@ RUN go mod download && go mod verify
 
 COPY . .
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build \
-      -ldflags="-w -s -X github.com/devs-group/skillbox/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo dev) -X github.com/devs-group/skillbox/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+      -ldflags="-w -s -X github.com/devs-group/skillbox/internal/version.Version=${VERSION} -X github.com/devs-group/skillbox/internal/version.Commit=${COMMIT}" \
       -trimpath \
       -o /bin/skillbox-server \
       ./cmd/skillbox-server
