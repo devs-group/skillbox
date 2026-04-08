@@ -1,8 +1,9 @@
-name: CI
+name: Lint & Test
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -12,7 +13,6 @@ permissions:
 jobs:
   lint:
     name: Lint
-    if: github.event_name == 'pull_request'
     runs-on: netcup
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +26,6 @@ jobs:
 
   test:
     name: Test
-    if: github.event_name == 'pull_request'
     runs-on: netcup
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +43,6 @@ jobs:
 
   security:
     name: Security Scan
-    if: github.event_name == 'pull_request'
     runs-on: netcup
     steps:
       - uses: actions/checkout@v4
@@ -55,27 +53,3 @@ jobs:
         uses: securego/gosec@master
         with:
           args: -exclude=G104,G107,G117,G204,G304,G122,G118 ./...
-
-  build:
-    name: Build
-    if: github.event_name == 'push'
-    runs-on: netcup
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build server
-        run: CGO_ENABLED=0 go build -trimpath -o bin/skillbox-server ./cmd/skillbox-server
-      - name: Build CLI
-        run: CGO_ENABLED=0 go build -trimpath -o bin/skillbox ./cmd/skillbox
-
-  docker:
-    name: Docker Build
-    if: github.event_name == 'push'
-    runs-on: netcup
-    needs: [build]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -f deploy/docker/Dockerfile -t skillbox:test .
