@@ -51,3 +51,27 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
       - name: Run gosec
         run: gosec -exclude=G104,G107,G117,G204,G304,G122,G118 ./...
+
+  sandbox-image:
+    name: Sandbox image smoke test
+    runs-on: netcup
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sandbox image
+        run: docker build -f deploy/docker/Dockerfile.sandbox -t skillbox-sandbox:ci .
+      - name: Verify expected CLI tools present
+        # Pinned tools agents rely on. Adding a tool to Dockerfile.sandbox?
+        # Add its version check here so a future removal trips the build.
+        #
+        # NOTE: bash with -o pipefail is required. Under plain sh -e, a
+        # missing binary on the LHS of a pipe (e.g. `rg --version | head -1`)
+        # would exit 127, head would exit 0, and the step would falsely pass.
+        run: |
+          docker run --rm skillbox-sandbox:ci bash -euo pipefail -c '
+            jq --version
+            rg --version | head -1
+            fd --version
+            curl --version | head -1
+            uv --version
+            python3 --version
+          '
