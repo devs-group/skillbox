@@ -54,7 +54,7 @@ jobs:
 
   sandbox-image:
     name: Sandbox image smoke test
-    runs-on: netcup
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build sandbox image
