@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type MarketplaceService struct {
 	reg         *registry.Registry
 	store       *store.Store
 	cache       sync.Map
+	apiBaseURL  string // override for tests; defaults to https://api.github.com
 }
 
 // SearchResult represents a single result from GitHub Code Search.
@@ -126,8 +128,12 @@ func (m *MarketplaceService) Search(ctx context.Context, query string, page int)
 
 	// Build GitHub Code Search query: search for SKILL.md files matching the query.
 	ghQuery := fmt.Sprintf("filename:SKILL.md %s", query)
-	u := fmt.Sprintf("https://api.github.com/search/code?q=%s&page=%d&per_page=20",
-		url.QueryEscape(ghQuery), page)
+	base := m.apiBaseURL
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	u := fmt.Sprintf("%s/search/code?q=%s&page=%d&per_page=20",
+		base, url.QueryEscape(ghQuery), page)
 
 	body, err := m.githubGet(ctx, u)
 	if err != nil {
@@ -168,6 +174,10 @@ func (m *MarketplaceService) Search(ctx context.Context, query string, page int)
 			HTMLURL:     item.HTMLURL,
 		})
 	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Stars > results[j].Stars
+	})
 
 	perPage := 30
 	resp := &SearchResponse{
