@@ -31,7 +31,7 @@ jobs:
 
   docker:
     name: Docker Release
-    runs-on: netcup
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
