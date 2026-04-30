@@ -238,7 +238,6 @@ func TestHandle_ListDir(t *testing.T) {
 }
 
 func TestHandle_PresentFiles(t *testing.T) {
-	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/sandbox/read-file":
@@ -246,7 +245,6 @@ func TestHandle_PresentFiles(t *testing.T) {
 				Content string `json:"content"`
 			}{Content: "file content here"})
 		case "/v1/files":
-			callCount++
 			_ = json.NewEncoder(w).Encode(FileInfo{
 				ID:   "file-abc-123",
 				Name: "report.pdf",
@@ -257,7 +255,7 @@ func TestHandle_PresentFiles(t *testing.T) {
 
 	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
 	output, files, err := toolkit.Handle(context.Background(), "present_files",
-		json.RawMessage(`{"filepaths": ["/sandbox/session/outputs/report.pdf"]}`))
+		json.RawMessage(`{"source":"outputs","filenames":["report.pdf"]}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,22 +276,77 @@ func TestHandle_PresentFiles(t *testing.T) {
 	}
 }
 
-func TestHandle_PresentFiles_BadPath(t *testing.T) {
+// Unknown source enum values must reject with a list of accepted sources so the LLM can self-correct on the next turn.
+func TestHandle_PresentFiles_UnknownSourceRejected(t *testing.T) {
 	toolkit := NewWorkspaceToolkit(New("http://localhost", "sk-test"), "sess-1")
 	output, _, _ := toolkit.Handle(context.Background(), "present_files",
-		json.RawMessage(`{"filepaths": ["/sandbox/session/not-outputs/file.txt"]}`))
-	if !strings.Contains(output, "not in /sandbox/session/outputs/") {
+		json.RawMessage(`{"source":"scratch","filenames":["x.txt"]}`))
+	if !strings.Contains(output, "is not allowed") {
+		t.Errorf("rejection should explain the constraint; output = %q", output)
+	}
+	if !strings.Contains(output, "outputs") || !strings.Contains(output, "uploads") {
+		t.Errorf("rejection should enumerate accepted sources; output = %q", output)
+	}
+}
+
+// User-uploaded files mirrored to /sandbox/session/uploads/ must be presentable in a single tool call.
+func TestHandle_PresentFiles_UploadsSourceAccepted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/sandbox/read-file":
+			_ = json.NewEncoder(w).Encode(struct {
+				Content string `json:"content"`
+			}{Content: "user uploaded image bytes"})
+		case "/v1/files":
+			_ = json.NewEncoder(w).Encode(FileInfo{
+				ID:   "file-upload-1",
+				Name: "librarian.png",
+			})
+		}
+	}))
+	defer srv.Close() //nolint:errcheck
+
+	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
+	output, files, err := toolkit.Handle(context.Background(), "present_files",
+		json.RawMessage(`{"source":"uploads","filenames":["librarian.png"]}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got %d files, want 1; output=%q", len(files), output)
+	}
+	if files[0].Filename != "librarian.png" {
+		t.Errorf("filename = %q, want %q", files[0].Filename, "librarian.png")
+	}
+	if !strings.Contains(output, "Presented 1 file") {
 		t.Errorf("output = %q", output)
+	}
+}
+
+// Filenames must be basenames; slashes and traversal segments are rejected at the parameter level so traversal can't sneak in via the relative side.
+func TestHandle_PresentFiles_RejectsBadFilenames(t *testing.T) {
+	toolkit := NewWorkspaceToolkit(New("http://localhost", "sk-test"), "sess-1")
+	cases := []string{
+		`{"source":"uploads","filenames":["../etc/passwd"]}`,
+		`{"source":"uploads","filenames":["nested/file.png"]}`,
+		`{"source":"uploads","filenames":[".."]}`,
+		`{"source":"uploads","filenames":[""]}`,
+	}
+	for _, args := range cases {
+		output, _, _ := toolkit.Handle(context.Background(), "present_files", json.RawMessage(args))
+		if strings.Contains(output, "Presented") {
+			t.Errorf("bad filename payload %q must be rejected; output = %q", args, output)
+		}
 	}
 }
 
 func TestHandle_PresentFiles_TooMany(t *testing.T) {
 	toolkit := NewWorkspaceToolkit(New("http://localhost", "sk-test"), "sess-1")
-	paths := make([]string, 21)
-	for i := range paths {
-		paths[i] = "/sandbox/session/outputs/file.txt"
+	names := make([]string, 21)
+	for i := range names {
+		names[i] = "file.txt"
 	}
-	args, _ := json.Marshal(map[string]any{"filepaths": paths})
+	args, _ := json.Marshal(map[string]any{"source": "outputs", "filenames": names})
 	output, _, _ := toolkit.Handle(context.Background(), "present_files", args)
 	if !strings.Contains(output, "too many files") {
 		t.Errorf("output = %q", output)

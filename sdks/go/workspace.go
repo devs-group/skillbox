@@ -234,51 +234,76 @@ func (t *WorkspaceToolkit) handleListDir(ctx context.Context, args json.RawMessa
 	return out.String(), nil
 }
 
+// presentableSources maps the `source` enum exposed to the LLM to the absolute sandbox dir it resolves to. Adding a new presentable surface (drive/, scratch/, ...) is a single map entry — no new tool, no schema migration, no allowlist string-prefix gotchas.
+var presentableSources = map[string]string{
+	"outputs": "/sandbox/session/outputs/",
+	"uploads": "/sandbox/session/uploads/",
+}
+
+func presentableSourceKeys() []string {
+	keys := make([]string, 0, len(presentableSources))
+	for k := range presentableSources {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// IsValidPresentSource reports whether `source` is an accepted enum value. Exported so callers (aigent's executor mirror, future custom dispatchers) can run the same validation without re-implementing the map.
+func IsValidPresentSource(source string) bool {
+	_, ok := presentableSources[source]
+	return ok
+}
+
 func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.RawMessage) (string, []FileRef, error) {
 	var a struct {
-		Filepaths []string `json:"filepaths"`
+		Source    string   `json:"source"`
+		Filenames []string `json:"filenames"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "invalid arguments: " + err.Error(), nil, nil
 	}
-	if len(a.Filepaths) == 0 {
-		return "filepaths is required and must not be empty", nil, nil
+	root, ok := presentableSources[a.Source]
+	if !ok {
+		return fmt.Sprintf("source %q is not allowed; expected one of %v", a.Source, presentableSourceKeys()), nil, nil
 	}
-	if len(a.Filepaths) > 20 {
-		return fmt.Sprintf("too many files: %d (max 20)", len(a.Filepaths)), nil, nil
+	if len(a.Filenames) == 0 {
+		return "filenames is required and must not be empty", nil, nil
+	}
+	if len(a.Filenames) > 20 {
+		return fmt.Sprintf("too many files: %d (max 20)", len(a.Filenames)), nil, nil
 	}
 
-	for _, fp := range a.Filepaths {
-		cleaned := filepath.Clean(fp)
-		if !strings.HasPrefix(cleaned, "/sandbox/session/outputs/") || strings.Contains(cleaned, "..") {
-			return fmt.Sprintf("file %s is not in /sandbox/session/outputs/", fp), nil, nil
+	// Filenames are basenames relative to the source dir. Reject anything with separators or `..` so traversal can't sneak in via the relative side either.
+	for _, name := range a.Filenames {
+		if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+			return fmt.Sprintf("filename %q must be a basename (no slashes, no '..')", name), nil, nil
 		}
 	}
 
 	var refs []FileRef
 	var presented []string
 
-	for _, fp := range a.Filepaths {
+	for _, name := range a.Filenames {
+		fp := root + name
 		data, err := t.client.SandboxDownloadFile(ctx, t.sessionID, fp)
 		if err != nil {
 			continue
 		}
 
-		filename := filepath.Base(fp)
-		mimeType := detectMimeType(filename)
+		mimeType := detectMimeType(name)
 
-		fileInfo, err := t.client.UploadFileFromReader(ctx, filename, bytes.NewReader(data))
+		fileInfo, err := t.client.UploadFileFromReader(ctx, name, bytes.NewReader(data))
 		if err != nil {
 			continue
 		}
 
 		refs = append(refs, FileRef{
 			ID:       fileInfo.ID,
-			Filename: filename,
+			Filename: name,
 			MimeType: mimeType,
 			Size:     int64(len(data)),
 		})
-		presented = append(presented, fmt.Sprintf("- %s (%s)", filename, fileInfo.ID))
+		presented = append(presented, fmt.Sprintf("- %s (%s)", name, fileInfo.ID))
 	}
 
 	if len(refs) == 0 {
@@ -420,17 +445,22 @@ var workspaceToolDefs = []ToolDefinition{
 	},
 	{
 		Name:        "present_files",
-		Description: "Present output files to the user as downloadable artifacts. Files must be in /sandbox/session/outputs/.",
+		Description: "Present files to the user as downloadable artifacts. Pick the source by intent: 'outputs' for files you generated this turn, 'uploads' to re-display a file the user uploaded earlier in this session.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"filepaths": map[string]any{
+				"source": map[string]any{
+					"type":        "string",
+					"enum":        []string{"outputs", "uploads"},
+					"description": "Where the files live. 'outputs' = agent-generated deliverables under /sandbox/session/outputs/. 'uploads' = files the user uploaded earlier under /sandbox/session/uploads/.",
+				},
+				"filenames": map[string]any{
 					"type":        "array",
-					"description": "Array of absolute paths to files in /sandbox/session/outputs/ to present.",
+					"description": "Basenames (no slashes, no '..') of files to present. Each must already exist inside the chosen source directory.",
 					"items":       map[string]any{"type": "string"},
 				},
 			},
-			"required": []string{"filepaths"},
+			"required": []string{"source", "filenames"},
 		},
 	},
 }
