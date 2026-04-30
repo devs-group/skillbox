@@ -282,8 +282,52 @@ func TestHandle_PresentFiles_BadPath(t *testing.T) {
 	toolkit := NewWorkspaceToolkit(New("http://localhost", "sk-test"), "sess-1")
 	output, _, _ := toolkit.Handle(context.Background(), "present_files",
 		json.RawMessage(`{"filepaths": ["/sandbox/session/not-outputs/file.txt"]}`))
-	if !strings.Contains(output, "not in /sandbox/session/outputs/") {
+	if !strings.Contains(output, "/sandbox/session/outputs/") || !strings.Contains(output, "/sandbox/session/uploads/") {
+		t.Errorf("rejection should list both allowed prefixes; output = %q", output)
+	}
+}
+
+// User-uploaded files mirrored to /sandbox/session/uploads/ must be presentable in a single tool call. Without this the agent has to cp the upload into outputs/ before calling present_files — a wasteful 3-call dance per re-display.
+func TestHandle_PresentFiles_UploadsPathAccepted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/sandbox/read-file":
+			_ = json.NewEncoder(w).Encode(struct {
+				Content string `json:"content"`
+			}{Content: "user uploaded image bytes"})
+		case "/v1/files":
+			_ = json.NewEncoder(w).Encode(FileInfo{
+				ID:   "file-upload-1",
+				Name: "librarian.png",
+			})
+		}
+	}))
+	defer srv.Close() //nolint:errcheck
+
+	toolkit := NewWorkspaceToolkit(New(srv.URL, "sk-test"), "sess-1")
+	output, files, err := toolkit.Handle(context.Background(), "present_files",
+		json.RawMessage(`{"filepaths": ["/sandbox/session/uploads/librarian.png"]}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got %d files, want 1; output=%q", len(files), output)
+	}
+	if files[0].Filename != "librarian.png" {
+		t.Errorf("filename = %q, want %q", files[0].Filename, "librarian.png")
+	}
+	if !strings.Contains(output, "Presented 1 file") {
 		t.Errorf("output = %q", output)
+	}
+}
+
+// Path traversal still blocked even when the prefix is allowed.
+func TestHandle_PresentFiles_TraversalRejected(t *testing.T) {
+	toolkit := NewWorkspaceToolkit(New("http://localhost", "sk-test"), "sess-1")
+	output, _, _ := toolkit.Handle(context.Background(), "present_files",
+		json.RawMessage(`{"filepaths": ["/sandbox/session/uploads/../etc/passwd"]}`))
+	if strings.Contains(output, "Presented") {
+		t.Errorf("traversal must be rejected; output = %q", output)
 	}
 }
 

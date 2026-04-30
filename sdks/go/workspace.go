@@ -250,8 +250,8 @@ func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.Raw
 
 	for _, fp := range a.Filepaths {
 		cleaned := filepath.Clean(fp)
-		if !strings.HasPrefix(cleaned, "/sandbox/session/outputs/") || strings.Contains(cleaned, "..") {
-			return fmt.Sprintf("file %s is not in /sandbox/session/outputs/", fp), nil, nil
+		if strings.Contains(cleaned, "..") || !isPresentablePath(cleaned) {
+			return fmt.Sprintf("file %s is not in /sandbox/session/outputs/ or /sandbox/session/uploads/", fp), nil, nil
 		}
 	}
 
@@ -287,6 +287,21 @@ func (t *WorkspaceToolkit) handlePresentFiles(ctx context.Context, args json.Raw
 
 	output := fmt.Sprintf("Presented %d file(s):\n%s", len(refs), strings.Join(presented, "\n"))
 	return output, refs, nil
+}
+
+// presentableDirs lists the absolute prefixes that present_files accepts. outputs/ holds agent-generated deliverables; uploads/ holds files the user uploaded earlier in the session — both are first-class targets for re-display.
+var presentableDirs = []string{
+	"/sandbox/session/outputs/",
+	"/sandbox/session/uploads/",
+}
+
+func isPresentablePath(cleaned string) bool {
+	for _, dir := range presentableDirs {
+		if strings.HasPrefix(cleaned, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // --------------------------------------------------------------------
@@ -420,13 +435,13 @@ var workspaceToolDefs = []ToolDefinition{
 	},
 	{
 		Name:        "present_files",
-		Description: "Present output files to the user as downloadable artifacts. Files must be in /sandbox/session/outputs/.",
+		Description: "Present files to the user as downloadable artifacts. Accepts files under /sandbox/session/outputs/ (agent deliverables) and /sandbox/session/uploads/ (files the user uploaded earlier in this session).",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"filepaths": map[string]any{
 					"type":        "array",
-					"description": "Array of absolute paths to files in /sandbox/session/outputs/ to present.",
+					"description": "Array of absolute paths to present. Must be under /sandbox/session/outputs/ or /sandbox/session/uploads/.",
 					"items":       map[string]any{"type": "string"},
 				},
 			},
