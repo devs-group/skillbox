@@ -6,8 +6,8 @@ import (
 )
 
 // ListMarketplaceSkills returns public skills, optionally filtered by search
-// query (ILIKE on name and description). Returns matching records, total count,
-// and any error.
+// query (ILIKE on name and description). Results are ordered by GitHub stars
+// descending (most-starred first), then by name as a stable tiebreaker.
 func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, offset int) ([]SkillRecord, int, error) {
 	if limit <= 0 {
 		limit = 20
@@ -35,11 +35,11 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 		}
 
 		rows, err := s.conn().QueryContext(ctx, `
-			SELECT tenant_id, name, version, description, lang, uploaded_at
+			SELECT tenant_id, name, version, description, lang, stars, uploaded_at
 			FROM sandbox.skills
 			WHERE tenant_id = 'public'
 			  AND (name ILIKE $1 OR description ILIKE $1)
-			ORDER BY name, version
+			ORDER BY stars DESC, name ASC, version ASC
 			LIMIT $2 OFFSET $3
 		`, pattern, limit, offset)
 		if err != nil {
@@ -49,7 +49,7 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 
 		for rows.Next() {
 			var rec SkillRecord
-			if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version, &rec.Description, &rec.Lang, &rec.UploadedAt); err != nil {
+			if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version, &rec.Description, &rec.Lang, &rec.Stars, &rec.UploadedAt); err != nil {
 				return nil, 0, fmt.Errorf("scan marketplace skill: %w", err)
 			}
 			records = append(records, rec)
@@ -66,10 +66,10 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 		}
 
 		rows, err := s.conn().QueryContext(ctx, `
-			SELECT tenant_id, name, version, description, lang, uploaded_at
+			SELECT tenant_id, name, version, description, lang, stars, uploaded_at
 			FROM sandbox.skills
 			WHERE tenant_id = 'public'
-			ORDER BY name, version
+			ORDER BY stars DESC, name ASC, version ASC
 			LIMIT $1 OFFSET $2
 		`, limit, offset)
 		if err != nil {
@@ -79,7 +79,7 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 
 		for rows.Next() {
 			var rec SkillRecord
-			if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version, &rec.Description, &rec.Lang, &rec.UploadedAt); err != nil {
+			if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version, &rec.Description, &rec.Lang, &rec.Stars, &rec.UploadedAt); err != nil {
 				return nil, 0, fmt.Errorf("scan marketplace skill: %w", err)
 			}
 			records = append(records, rec)
@@ -96,12 +96,12 @@ func (s *Store) ListMarketplaceSkills(ctx context.Context, query string, limit, 
 func (s *Store) GetMarketplaceSkill(ctx context.Context, name string) (*SkillRecord, error) {
 	rec := &SkillRecord{}
 	err := s.conn().QueryRowContext(ctx, `
-		SELECT tenant_id, name, version, description, lang, uploaded_at
+		SELECT tenant_id, name, version, description, lang, stars, uploaded_at
 		FROM sandbox.skills
 		WHERE tenant_id = 'public' AND name = $1
 		ORDER BY uploaded_at DESC
 		LIMIT 1
-	`, name).Scan(&rec.TenantID, &rec.Name, &rec.Version, &rec.Description, &rec.Lang, &rec.UploadedAt)
+	`, name).Scan(&rec.TenantID, &rec.Name, &rec.Version, &rec.Description, &rec.Lang, &rec.Stars, &rec.UploadedAt)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, ErrNotFound
