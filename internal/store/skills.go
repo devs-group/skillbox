@@ -27,6 +27,7 @@ type SkillRecord struct {
 	Description string          `json:"description"`
 	Lang        string          `json:"lang"`
 	Status      string          `json:"status"`
+	Stars       int             `json:"stars"`
 	ScanResult  json.RawMessage `json:"scan_result,omitempty"`
 	ScannedAt   *time.Time      `json:"scanned_at,omitempty"`
 	ReviewedBy  *string         `json:"reviewed_by,omitempty"`
@@ -42,14 +43,15 @@ func (s *Store) UpsertSkill(ctx context.Context, rec *SkillRecord) error {
 		status = SkillStatusPending
 	}
 	_, err := s.conn().ExecContext(ctx, `
-		INSERT INTO sandbox.skills (tenant_id, name, version, description, lang, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO sandbox.skills (tenant_id, name, version, description, lang, status, stars)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (tenant_id, name, version)
 		DO UPDATE SET description = EXCLUDED.description,
 		              lang = EXCLUDED.lang,
 		              status = EXCLUDED.status,
+		              stars = GREATEST(sandbox.skills.stars, EXCLUDED.stars),
 		              uploaded_at = now()
-	`, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.Lang, status)
+	`, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.Lang, status, rec.Stars)
 	if err != nil {
 		return fmt.Errorf("upsert skill: %w", err)
 	}
@@ -65,7 +67,7 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 		status = statusFilter[0]
 	}
 	rows, err := s.conn().QueryContext(ctx, `
-		SELECT tenant_id, name, version, description, lang, status,
+		SELECT tenant_id, name, version, description, lang, status, stars,
 		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at
 		FROM sandbox.skills
 		WHERE tenant_id = $1 AND status = $2
@@ -80,7 +82,7 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 	for rows.Next() {
 		var rec SkillRecord
 		if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version,
-			&rec.Description, &rec.Lang, &rec.Status,
+			&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
 			&rec.ScanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
 			&rec.UploadedAt); err != nil {
 			return nil, fmt.Errorf("scan skill row: %w", err)
@@ -98,13 +100,13 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 func (s *Store) GetSkill(ctx context.Context, tenantID, name, version string) (*SkillRecord, error) {
 	rec := &SkillRecord{}
 	err := s.conn().QueryRowContext(ctx, `
-		SELECT tenant_id, name, version, description, lang, status,
+		SELECT tenant_id, name, version, description, lang, status, stars,
 		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at
 		FROM sandbox.skills
 		WHERE tenant_id = $1 AND name = $2 AND version = $3
 	`, tenantID, name, version).Scan(
 		&rec.TenantID, &rec.Name, &rec.Version,
-		&rec.Description, &rec.Lang, &rec.Status,
+		&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
 		&rec.ScanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
 		&rec.UploadedAt,
 	)
@@ -183,7 +185,7 @@ func (s *Store) GetSkillStatus(ctx context.Context, tenantID, name, version stri
 // all tenants. Used by the background scan worker for startup recovery.
 func (s *Store) ListPendingSkills(ctx context.Context) ([]SkillRecord, error) {
 	rows, err := s.conn().QueryContext(ctx, `
-		SELECT tenant_id, name, version, description, lang, status,
+		SELECT tenant_id, name, version, description, lang, status, stars,
 		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at
 		FROM sandbox.skills
 		WHERE status IN ('pending', 'scanning')
@@ -198,7 +200,7 @@ func (s *Store) ListPendingSkills(ctx context.Context) ([]SkillRecord, error) {
 	for rows.Next() {
 		var rec SkillRecord
 		if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version,
-			&rec.Description, &rec.Lang, &rec.Status,
+			&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
 			&rec.ScanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
 			&rec.UploadedAt); err != nil {
 			return nil, fmt.Errorf("scan pending skill row: %w", err)

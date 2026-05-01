@@ -89,6 +89,7 @@ type InstallRequest struct {
 	RepoName  string `json:"repo_name"`
 	FilePath  string `json:"file_path"`
 	SkillName string `json:"skill_name"` // optional override for name collision
+	Stars     int    `json:"stars"`      // GitHub stargazer count, used for marketplace ranking
 }
 
 // InstallResponse contains the result of a successful installation.
@@ -345,7 +346,8 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 		return nil, fmt.Errorf("submit to registry: %w", err)
 	}
 
-	// 6. Upsert metadata with pending status.
+	// 6. Upsert metadata with pending status. Carry the GitHub stargazer
+	// count so the marketplace listing can rank by popularity.
 	err = m.store.UpsertSkill(ctx, &store.SkillRecord{
 		TenantID:    tenantID,
 		Name:        parsed.Name,
@@ -353,6 +355,7 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 		Description: parsed.Description,
 		Lang:        parsed.Lang,
 		Status:      store.SkillStatusPending,
+		Stars:       req.Stars,
 	})
 	if err != nil {
 		slog.Warn("failed to upsert skill metadata", "error", err)

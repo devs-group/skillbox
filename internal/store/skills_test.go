@@ -59,7 +59,7 @@ func TestResolveLatestVersion_NotFound(t *testing.T) {
 
 // skillColumns matches the SELECT column order in store.GetSkill / ListSkills.
 var skillColumns = []string{
-	"tenant_id", "name", "version", "description", "lang", "status",
+	"tenant_id", "name", "version", "description", "lang", "status", "stars",
 	"scan_result", "scanned_at", "reviewed_by", "reviewed_at", "uploaded_at",
 }
 
@@ -75,7 +75,7 @@ func TestGetSkill_ReturnsRecord(t *testing.T) {
 	mock.ExpectQuery("SELECT tenant_id, name, version, description, lang, status").
 		WithArgs("tenant-1", "my-skill", "1.0.0").
 		WillReturnRows(sqlmock.NewRows(skillColumns).
-			AddRow("tenant-1", "my-skill", "1.0.0", "A test skill", "python", "available",
+			AddRow("tenant-1", "my-skill", "1.0.0", "A test skill", "python", "available", 0,
 				[]byte(nil), nil, nil, nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)))
 
 	rec, err := s.GetSkill(context.Background(), "tenant-1", "my-skill", "1.0.0")
