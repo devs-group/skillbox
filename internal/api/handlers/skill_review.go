@@ -11,11 +11,12 @@ import (
 	"github.com/devs-group/skillbox/internal/store"
 )
 
-// reviewRequest is the JSON body for PUT /v1/admin/skills/:name/:version/review.
 type reviewRequest struct {
-	Action  string `json:"action" binding:"required"` // "approve" or "decline"
+	Action  string `json:"action" binding:"required"`
 	Comment string `json:"comment"`
 }
+
+var reviewActions = map[string]string{"approve": "available", "decline": "declined", "decline_forever": "declined", "reopen": "review"}
 
 // ReviewSkill handles PUT /v1/admin/skills/:name/:version/review.
 // Allows an admin to approve or decline a skill in 'review' status.
@@ -37,16 +38,14 @@ func ReviewSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			return
 		}
 
-		if req.Action != "approve" && req.Action != "decline" {
-			response.RespondError(c, http.StatusBadRequest, "bad_request", "action must be 'approve' or 'decline'")
+		if _, ok := reviewActions[req.Action]; !ok {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "action must be 'approve', 'decline', 'decline_forever', or 'reopen'")
 			return
 		}
 
-		// Get the admin identity for audit trail.
-		reviewedBy := "admin" // TODO: extract from auth context when available.
+		reviewedBy := "admin"
 
-		// Update skill status in DB.
-		if err := s.ReviewSkill(c.Request.Context(), tenantID, name, version, req.Action, reviewedBy); err != nil {
+		if err := s.ReviewSkill(c.Request.Context(), tenantID, name, version, req.Action, reviewedBy, req.Comment); err != nil {
 			if err == store.ErrNotFound {
 				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found or not in review status")
 				return
@@ -55,10 +54,12 @@ func ReviewSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			return
 		}
 
-		// On approve, promote from pending to available in the registry.
+		// On approve, promote from pending to main when applicable. Skill may
+		// already be in main (declined-from-available transition) — the
+		// pending source will be missing and Promote returns an error; that's
+		// fine, DB status is the source of truth for runtime gating.
 		if req.Action == "approve" {
 			if err := reg.Promote(c.Request.Context(), tenantID, name, version); err != nil {
-				// Non-fatal: DB is already updated. Log the error.
 				_ = c.Error(err)
 			}
 		}
@@ -66,7 +67,7 @@ func ReviewSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"name":    name,
 			"version": version,
-			"status":  map[string]string{"approve": "available", "decline": "declined"}[req.Action],
+			"status":  reviewActions[req.Action],
 		})
 	}
 }

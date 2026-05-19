@@ -59,6 +59,19 @@ func CreateFromFields(reg *registry.Registry, s *store.Store, cfg *config.Config
 			return
 		}
 
+		if blocked, _ := s.IsSkillBlocked(c.Request.Context(), tenantID, req.Name); blocked {
+			response.RespondError(c, http.StatusForbidden, "skill_blocked", "Skill "+req.Name+" has been blocked by an admin.")
+			return
+		}
+		if existing, _ := s.ListAllSkills(c.Request.Context(), tenantID); existing != nil {
+			for _, e := range existing {
+				if e.Name == req.Name && e.Status != store.SkillStatusDeclined {
+					response.RespondError(c, http.StatusConflict, "skill_exists", "Skill "+req.Name+" is already in your skills (status: "+e.Status+").")
+					return
+				}
+			}
+		}
+
 		skillMD := skill.BuildSkillMD(req.Name, req.Description, lang, version, req.Instructions)
 
 		zipData, err := skill.PackageSkillZip(skillMD, req.Code, lang)

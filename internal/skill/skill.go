@@ -164,6 +164,9 @@ type SkillSummary struct {
 	Description string `json:"description"`
 	Lang        string `json:"lang"`
 	Mode        string `json:"mode"`
+	Status      string `json:"status,omitempty"`
+	SourceURL   string `json:"source_url,omitempty"`
+	Blocked     bool   `json:"blocked,omitempty"`
 }
 
 // ValidateName checks that a skill name contains only safe characters.
