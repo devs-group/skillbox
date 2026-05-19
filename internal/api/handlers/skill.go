@@ -107,6 +107,19 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 			return
 		}
 
+		if blocked, _ := s.IsSkillBlocked(c.Request.Context(), tenantID, parsedSkill.Name); blocked {
+			response.RespondError(c, http.StatusForbidden, "skill_blocked", "Skill "+parsedSkill.Name+" has been blocked by an admin.")
+			return
+		}
+		if existing, _ := s.ListAllSkills(c.Request.Context(), tenantID); existing != nil {
+			for _, e := range existing {
+				if e.Name == parsedSkill.Name && e.Status != store.SkillStatusDeclined {
+					response.RespondError(c, http.StatusConflict, "skill_exists", "Skill "+parsedSkill.Name+" is already in your skills.")
+					return
+				}
+			}
+		}
+
 		// Quick pre-storage validation: reject obvious zip bombs before
 		// writing to MinIO. The full tiered scan runs asynchronously.
 		zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
@@ -613,9 +626,17 @@ func ListSkills(s *store.Store, reg *registry.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := middleware.GetTenantID(c)
 
-		// Try the database first — it has descriptions.
-		records, err := s.ListSkills(c.Request.Context(), tenantID)
-		if err == nil && len(records) > 0 {
+		statusFilter := c.Query("status")
+		var records []store.SkillRecord
+		var err error
+		if statusFilter == "all" {
+			records, err = s.ListAllSkills(c.Request.Context(), tenantID)
+		} else if statusFilter != "" {
+			records, err = s.ListSkills(c.Request.Context(), tenantID, statusFilter)
+		} else {
+			records, err = s.ListSkills(c.Request.Context(), tenantID)
+		}
+		if err == nil {
 			summaries := make([]skill.SkillSummary, len(records))
 			for i, rec := range records {
 				summaries[i] = skill.SkillSummary{
@@ -623,7 +644,12 @@ func ListSkills(s *store.Store, reg *registry.Registry) gin.HandlerFunc {
 					Version:     rec.Version,
 					Description: rec.Description,
 					Lang:        rec.Lang,
-					Mode:        "executable", // Default; actual mode requires downloading the skill
+					Mode:        "executable",
+					Status:      rec.Status,
+					Blocked:     rec.Blocked,
+				}
+				if rec.SourceURL != nil {
+					summaries[i].SourceURL = *rec.SourceURL
 				}
 			}
 			c.JSON(http.StatusOK, summaries)

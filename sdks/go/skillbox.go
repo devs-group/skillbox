@@ -30,6 +30,7 @@ package skillbox
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -127,6 +128,9 @@ type Skill struct {
 	Description string `json:"description"`
 	Lang        string `json:"lang,omitempty"`
 	Mode        string `json:"mode,omitempty"`
+	Status      string `json:"status,omitempty"`
+	SourceURL   string `json:"source_url,omitempty"`
+	Blocked     bool   `json:"blocked,omitempty"`
 }
 
 // SkillDetail is the full skill definition returned by GetSkill, including
@@ -455,8 +459,12 @@ func (c *Client) UpsertSkillFromFields(ctx context.Context, req CreateFromFields
 
 // ListSkills returns all skills registered on the server. The response
 // includes descriptions so callers can decide which skill to use.
-func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/skills", nil)
+func (c *Client) ListSkills(ctx context.Context, statusFilter ...string) ([]Skill, error) {
+	path := "/v1/skills"
+	if len(statusFilter) > 0 && statusFilter[0] != "" {
+		path += "?status=" + statusFilter[0]
+	}
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +475,65 @@ func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {
 		return nil, err
 	}
 	return skills, nil
+}
+
+type ScannerConfig struct {
+	ApprovalPolicy string `json:"approval_policy"`
+}
+
+// GetScannerConfig returns the tenant's scanner configuration. Requires admin credentials.
+func (c *Client) GetScannerConfig(ctx context.Context) (*ScannerConfig, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/admin/scanner/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("skillbox get scanner config: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	var cfg ScannerConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("decode scanner config: %w", err)
+	}
+	return &cfg, nil
+}
+
+// UpdateScannerConfig sets the tenant's approval policy. Requires admin credentials.
+func (c *Client) UpdateScannerConfig(ctx context.Context, cfg ScannerConfig) error {
+	body, err := json.Marshal(map[string]string{"approval_policy": cfg.ApprovalPolicy})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, "/v1/admin/scanner/config", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("skillbox update scanner config: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ReviewSkill approves or declines a skill currently in review status.
+// Action must be "approve" or "decline". Requires admin credentials.
+func (c *Client) ReviewSkill(ctx context.Context, name, version, action, comment string) error {
+	body, err := json.Marshal(map[string]string{"action": action, "comment": comment})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, "/v1/admin/skills/"+name+"/"+version+"/review", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("skillbox review skill: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // GetSkill retrieves the full metadata for a specific skill version,

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // Skill status constants.
@@ -33,6 +35,8 @@ type SkillRecord struct {
 	ReviewedBy  *string         `json:"reviewed_by,omitempty"`
 	ReviewedAt  *time.Time      `json:"reviewed_at,omitempty"`
 	UploadedAt  time.Time       `json:"uploaded_at"`
+	SourceURL   *string         `json:"source_url,omitempty"`
+	Blocked     bool            `json:"blocked,omitempty"`
 }
 
 // UpsertSkill inserts or updates a skill metadata record. On conflict
@@ -43,15 +47,16 @@ func (s *Store) UpsertSkill(ctx context.Context, rec *SkillRecord) error {
 		status = SkillStatusPending
 	}
 	_, err := s.conn().ExecContext(ctx, `
-		INSERT INTO sandbox.skills (tenant_id, name, version, description, lang, status, stars)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO sandbox.skills (tenant_id, name, version, description, lang, status, stars, source_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (tenant_id, name, version)
 		DO UPDATE SET description = EXCLUDED.description,
 		              lang = EXCLUDED.lang,
 		              status = EXCLUDED.status,
 		              stars = GREATEST(sandbox.skills.stars, EXCLUDED.stars),
+		              source_url = COALESCE(EXCLUDED.source_url, sandbox.skills.source_url),
 		              uploaded_at = now()
-	`, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.Lang, status, rec.Stars)
+	`, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.Lang, status, rec.Stars, rec.SourceURL)
 	if err != nil {
 		return fmt.Errorf("upsert skill: %w", err)
 	}
@@ -67,11 +72,14 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 		status = statusFilter[0]
 	}
 	rows, err := s.conn().QueryContext(ctx, `
-		SELECT tenant_id, name, version, description, lang, status, stars,
-		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at
-		FROM sandbox.skills
-		WHERE tenant_id = $1 AND status = $2
-		ORDER BY name, version
+		SELECT DISTINCT ON (s.name)
+		       s.tenant_id, s.name, s.version, s.description, s.lang, s.status, s.stars,
+		       s.scan_result, s.scanned_at, s.reviewed_by, s.reviewed_at, s.uploaded_at, s.source_url,
+		       b.name IS NOT NULL AS blocked
+		FROM sandbox.skills s
+		LEFT JOIN sandbox.tenant_blocked_skills b ON b.tenant_id = s.tenant_id AND b.name = s.name
+		WHERE s.tenant_id = $1 AND s.status = $2
+		ORDER BY s.name, s.uploaded_at DESC
 	`, tenantID, status)
 	if err != nil {
 		return nil, fmt.Errorf("list skills: %w", err)
@@ -81,11 +89,15 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 	var skills []SkillRecord
 	for rows.Next() {
 		var rec SkillRecord
+		var scanResult []byte
 		if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version,
 			&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
-			&rec.ScanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
-			&rec.UploadedAt); err != nil {
+			&scanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
+			&rec.UploadedAt, &rec.SourceURL, &rec.Blocked); err != nil {
 			return nil, fmt.Errorf("scan skill row: %w", err)
+		}
+		if scanResult != nil {
+			rec.ScanResult = json.RawMessage(scanResult)
 		}
 		skills = append(skills, rec)
 	}
@@ -96,28 +108,44 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 	return skills, nil
 }
 
-// GetSkill retrieves a single skill metadata record by tenant, name, and version.
-func (s *Store) GetSkill(ctx context.Context, tenantID, name, version string) (*SkillRecord, error) {
-	rec := &SkillRecord{}
-	err := s.conn().QueryRowContext(ctx, `
-		SELECT tenant_id, name, version, description, lang, status, stars,
-		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at
-		FROM sandbox.skills
-		WHERE tenant_id = $1 AND name = $2 AND version = $3
-	`, tenantID, name, version).Scan(
-		&rec.TenantID, &rec.Name, &rec.Version,
-		&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
-		&rec.ScanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
-		&rec.UploadedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
+// ListAllSkills returns every skill for a tenant regardless of status.
+func (s *Store) ListAllSkills(ctx context.Context, tenantID string) ([]SkillRecord, error) {
+	rows, err := s.conn().QueryContext(ctx, `
+		SELECT DISTINCT ON (s.name)
+		       s.tenant_id, s.name, s.version, s.description, s.lang, s.status, s.stars,
+		       s.scan_result, s.scanned_at, s.reviewed_by, s.reviewed_at, s.uploaded_at, s.source_url,
+		       b.name IS NOT NULL AS blocked
+		FROM sandbox.skills s
+		LEFT JOIN sandbox.tenant_blocked_skills b ON b.tenant_id = s.tenant_id AND b.name = s.name
+		WHERE s.tenant_id = $1
+		ORDER BY s.name, s.uploaded_at DESC
+	`, tenantID)
 	if err != nil {
-		return nil, fmt.Errorf("get skill: %w", err)
+		return nil, fmt.Errorf("list all skills: %w", err)
 	}
-	return rec, nil
+	defer rows.Close() //nolint:errcheck
+
+	var skills []SkillRecord
+	for rows.Next() {
+		var rec SkillRecord
+		var scanResult []byte
+		if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version,
+			&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
+			&scanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
+			&rec.UploadedAt, &rec.SourceURL, &rec.Blocked); err != nil {
+			return nil, fmt.Errorf("scan skill row: %w", err)
+		}
+		if scanResult != nil {
+			rec.ScanResult = json.RawMessage(scanResult)
+		}
+		skills = append(skills, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate skill rows: %w", err)
+	}
+	return skills, nil
 }
+
 
 // ResolveLatestVersion returns the version string of the most recently
 // uploaded skill for a given tenant and name. If no versions exist, it
@@ -186,7 +214,7 @@ func (s *Store) GetSkillStatus(ctx context.Context, tenantID, name, version stri
 func (s *Store) ListPendingSkills(ctx context.Context) ([]SkillRecord, error) {
 	rows, err := s.conn().QueryContext(ctx, `
 		SELECT tenant_id, name, version, description, lang, status, stars,
-		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at
+		       scan_result, scanned_at, reviewed_by, reviewed_at, uploaded_at, source_url
 		FROM sandbox.skills
 		WHERE status IN ('pending', 'scanning')
 		ORDER BY uploaded_at ASC
@@ -199,11 +227,15 @@ func (s *Store) ListPendingSkills(ctx context.Context) ([]SkillRecord, error) {
 	var skills []SkillRecord
 	for rows.Next() {
 		var rec SkillRecord
+		var scanResult []byte
 		if err := rows.Scan(&rec.TenantID, &rec.Name, &rec.Version,
 			&rec.Description, &rec.Lang, &rec.Status, &rec.Stars,
-			&rec.ScanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
-			&rec.UploadedAt); err != nil {
+			&scanResult, &rec.ScannedAt, &rec.ReviewedBy, &rec.ReviewedAt,
+			&rec.UploadedAt, &rec.SourceURL); err != nil {
 			return nil, fmt.Errorf("scan pending skill row: %w", err)
+		}
+		if scanResult != nil {
+			rec.ScanResult = json.RawMessage(scanResult)
 		}
 		skills = append(skills, rec)
 	}
@@ -213,16 +245,28 @@ func (s *Store) ListPendingSkills(ctx context.Context) ([]SkillRecord, error) {
 	return skills, nil
 }
 
-// ReviewSkill records an admin approval or decline for a skill in 'review' status.
-func (s *Store) ReviewSkill(ctx context.Context, tenantID, name, version, action, reviewedBy string) error {
+// ReviewSkill records an admin review action. Transitions:
+// approve: review|declined -> available (also clears any tenant block).
+// decline: review|available -> declined (soft, user can reinstall).
+// decline_forever: any -> declined + tenant block (user reinstall refused).
+func (s *Store) ReviewSkill(ctx context.Context, tenantID, name, version, action, reviewedBy, reason string) error {
 	var newStatus string
+	var allowedFrom []string
 	switch action {
 	case "approve":
 		newStatus = SkillStatusAvailable
+		allowedFrom = []string{SkillStatusReview, SkillStatusDeclined}
 	case "decline":
 		newStatus = SkillStatusDeclined
+		allowedFrom = []string{SkillStatusReview, SkillStatusAvailable}
+	case "decline_forever":
+		newStatus = SkillStatusDeclined
+		allowedFrom = []string{SkillStatusReview, SkillStatusAvailable, SkillStatusDeclined, SkillStatusPending, SkillStatusScanning}
+	case "reopen":
+		newStatus = SkillStatusReview
+		allowedFrom = []string{SkillStatusDeclined}
 	default:
-		return fmt.Errorf("invalid review action: %q (must be approve or decline)", action)
+		return fmt.Errorf("invalid review action: %q (must be approve, decline, decline_forever, or reopen)", action)
 	}
 
 	res, err := s.conn().ExecContext(ctx, `
@@ -231,8 +275,8 @@ func (s *Store) ReviewSkill(ctx context.Context, tenantID, name, version, action
 		    reviewed_by = $5,
 		    reviewed_at = now()
 		WHERE tenant_id = $1 AND name = $2 AND version = $3
-		  AND status = 'review'
-	`, tenantID, name, version, newStatus, reviewedBy)
+		  AND status = ANY($6)
+	`, tenantID, name, version, newStatus, reviewedBy, pq.Array(allowedFrom))
 	if err != nil {
 		return fmt.Errorf("review skill: %w", err)
 	}
@@ -243,7 +287,40 @@ func (s *Store) ReviewSkill(ctx context.Context, tenantID, name, version, action
 	if n == 0 {
 		return ErrNotFound
 	}
+
+	switch action {
+	case "approve", "reopen":
+		if _, err := s.conn().ExecContext(ctx,
+			`DELETE FROM sandbox.tenant_blocked_skills WHERE tenant_id = $1 AND name = $2`,
+			tenantID, name); err != nil {
+			return fmt.Errorf("clear block: %w", err)
+		}
+	case "decline_forever":
+		if _, err := s.conn().ExecContext(ctx, `
+			INSERT INTO sandbox.tenant_blocked_skills (tenant_id, name, blocked_by, reason)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (tenant_id, name)
+			DO UPDATE SET blocked_by = EXCLUDED.blocked_by, reason = EXCLUDED.reason, blocked_at = now()
+		`, tenantID, name, reviewedBy, reason); err != nil {
+			return fmt.Errorf("insert block: %w", err)
+		}
+	}
 	return nil
+}
+
+// IsSkillBlocked reports whether (tenant, name) is in the permanent block list.
+func (s *Store) IsSkillBlocked(ctx context.Context, tenantID, name string) (bool, error) {
+	var n int
+	err := s.conn().QueryRowContext(ctx,
+		`SELECT 1 FROM sandbox.tenant_blocked_skills WHERE tenant_id = $1 AND name = $2`,
+		tenantID, name).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check block: %w", err)
+	}
+	return true, nil
 }
 
 // DeleteSkill removes a skill metadata record and its associated execution

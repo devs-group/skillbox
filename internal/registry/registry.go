@@ -344,6 +344,10 @@ func (r *Registry) List(ctx context.Context, tenantID string) ([]SkillMeta, erro
 			continue
 		}
 
+		if strings.HasPrefix(parts[0], ".") {
+			continue
+		}
+
 		skills = append(skills, SkillMeta{
 			Name:       parts[0],
 			Version:    parts[1],

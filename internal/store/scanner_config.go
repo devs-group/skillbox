@@ -46,7 +46,7 @@ func (s *Store) GetScannerConfig(ctx context.Context, tenantID string) (*Scanner
 		// Return defaults when no config exists for this tenant.
 		return &ScannerConfig{
 			TenantID:       tenantID,
-			ApprovalPolicy: ApprovalPolicyAuto,
+			ApprovalPolicy: ApprovalPolicyAlways,
 			Tier1Enabled:   true,
 			Tier2Enabled:   true,
 			Tier3Enabled:   false,

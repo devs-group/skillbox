@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,8 @@ type PreviewResponse struct {
 	RepoName     string      `json:"repo_name"`
 	FilePath     string      `json:"file_path"`
 	Files        []FileEntry `json:"files"`
+	Inferred     bool        `json:"inferred,omitempty"`
+	ParseError   string      `json:"parse_error,omitempty"`
 }
 
 // InstallRequest specifies which GitHub skill to install.
@@ -127,8 +130,7 @@ func (m *MarketplaceService) Search(ctx context.Context, query string, page int)
 		return cached.(*SearchResponse), nil
 	}
 
-	// Build GitHub Code Search query: search for SKILL.md files matching the query.
-	ghQuery := fmt.Sprintf("filename:SKILL.md %s", query)
+	ghQuery := fmt.Sprintf(`filename:SKILL.md %s`, query)
 	base := m.apiBaseURL
 	if base == "" {
 		base = "https://api.github.com"
@@ -164,7 +166,16 @@ func (m *MarketplaceService) Search(ctx context.Context, query string, page int)
 		if len(parts) != 2 {
 			continue
 		}
+		if isNoisySkillPath(item.Path) {
+			continue
+		}
+		if !strings.EqualFold(path.Base(item.Path), "SKILL.md") {
+			continue
+		}
 		name := extractSkillName(item.Path)
+		if name == "imported-skill" {
+			name = parts[1]
+		}
 		results = append(results, SearchResult{
 			Name:        name,
 			Description: item.Repository.Description,
@@ -205,12 +216,13 @@ func (m *MarketplaceService) Preview(ctx context.Context, owner, repo, filePath 
 		return nil, fmt.Errorf("fetch SKILL.md: %w", err)
 	}
 
-	parsed, err := skill.ParseSkillMD(content)
-	if err != nil {
-		return nil, fmt.Errorf("parse SKILL.md: %w", err)
+	parsed, parseErr := skill.ParseSkillMD(content)
+	inferred := false
+	if parseErr != nil {
+		parsed = inferSkillFromRaw(repo, content)
+		inferred = true
 	}
 
-	// List sibling files in the same directory.
 	dir := path.Dir(filePath)
 	if dir == "." {
 		dir = ""
@@ -255,6 +267,10 @@ func (m *MarketplaceService) Preview(ctx context.Context, owner, repo, filePath 
 		RepoName:     repo,
 		FilePath:     filePath,
 		Files:        files,
+		Inferred:     inferred,
+	}
+	if parseErr != nil {
+		resp.ParseError = parseErr.Error()
 	}
 	m.setCache(cacheKey, resp)
 	return resp, nil
@@ -262,10 +278,27 @@ func (m *MarketplaceService) Preview(ctx context.Context, owner, repo, filePath 
 
 // Install fetches a skill from GitHub and uploads it to the tenant's registry.
 func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *InstallRequest) (*InstallResponse, error) {
-	// 1. Fetch SKILL.md from GitHub.
 	skillPath := req.FilePath
-	if !strings.HasSuffix(skillPath, "SKILL.md") {
+	if !strings.EqualFold(path.Base(skillPath), "SKILL.md") {
 		skillPath = path.Join(skillPath, "SKILL.md")
+	}
+
+	candidateName := extractSkillName(skillPath)
+	if candidateName == "imported-skill" {
+		candidateName = req.RepoName
+	}
+	if blocked, err := m.store.IsSkillBlocked(ctx, tenantID, candidateName); err != nil {
+		return nil, fmt.Errorf("check block: %w", err)
+	} else if blocked {
+		return nil, fmt.Errorf("skill_blocked: %q has been blocked by an admin", candidateName)
+	}
+
+	if existing, err := m.store.ListAllSkills(ctx, tenantID); err == nil {
+		for _, s := range existing {
+			if s.Name == candidateName && s.Status != store.SkillStatusDeclined {
+				return nil, fmt.Errorf("skill_exists: %q is already in your skills", candidateName)
+			}
+		}
 	}
 
 	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/HEAD/%s",
@@ -275,10 +308,15 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 		return nil, fmt.Errorf("fetch SKILL.md: %w", err)
 	}
 
-	// 2. Parse SKILL.md.
-	parsed, err := skill.ParseSkillMD(content)
-	if err != nil {
-		return nil, fmt.Errorf("parse SKILL.md: %w", err)
+	parsed, parseErr := skill.ParseSkillMD(content)
+	if parseErr != nil {
+		parsed = inferSkillFromRaw(req.RepoName, content)
+		slog.Info("install: inferring manifest for non-standard SKILL.md", "repo", req.RepoOwner+"/"+req.RepoName, "name", parsed.Name)
+		var synth bytes.Buffer
+		fmt.Fprintf(&synth, "---\nname: %s\nversion: %s\ndescription: %q\nmode: %s\n---\n\n",
+			parsed.Name, parsed.Version, parsed.Description, parsed.Mode)
+		synth.Write(content)
+		content = synth.Bytes()
 	}
 
 	// 3. Fetch all sibling files from GitHub.
@@ -320,17 +358,18 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 			continue
 		}
 
-		// For SKILL.md, use the original content we already fetched and parsed.
-		if f.Name == "SKILL.md" {
+		entryName := f.Name
+		if strings.EqualFold(f.Name, "SKILL.md") {
 			fileContent = content
+			entryName = "SKILL.md"
 		}
 
-		w, err := zw.Create(f.Name)
+		w, err := zw.Create(entryName)
 		if err != nil {
 			return nil, fmt.Errorf("create zip entry %s: %w", f.Name, err)
 		}
 		if _, err := w.Write(fileContent); err != nil {
-			return nil, fmt.Errorf("write zip entry %s: %w", f.Name, err)
+			return nil, fmt.Errorf("write zip entry %s: %w", entryName, err)
 		}
 	}
 
@@ -348,6 +387,15 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 
 	// 6. Upsert metadata with pending status. Carry the GitHub stargazer
 	// count so the marketplace listing can rank by popularity.
+	sourceDir := path.Dir(skillPath)
+	if sourceDir == "." {
+		sourceDir = ""
+	}
+	sourceURL := fmt.Sprintf("https://github.com/%s/%s", req.RepoOwner, req.RepoName)
+	if sourceDir != "" {
+		sourceURL += "/tree/HEAD/" + sourceDir
+	}
+
 	err = m.store.UpsertSkill(ctx, &store.SkillRecord{
 		TenantID:    tenantID,
 		Name:        parsed.Name,
@@ -356,6 +404,7 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 		Lang:        parsed.Lang,
 		Status:      store.SkillStatusPending,
 		Stars:       req.Stars,
+		SourceURL:   &sourceURL,
 	})
 	if err != nil {
 		slog.Warn("failed to upsert skill metadata", "error", err)
@@ -434,6 +483,32 @@ func (m *MarketplaceService) setCache(key string, data any) {
 	})
 }
 
+// isNoisySkillPath returns true for paths that match GitHub code search for
+// SKILL.md but are not real skill manifests (docs, examples, templates,
+// embedded agent skill libraries).
+func isNoisySkillPath(p string) bool {
+	lower := strings.ToLower(p)
+	noisy := []string{
+		"/docs/", "docs/",
+		"/doc/", "doc/",
+		"/examples/", "examples/",
+		"/example/", "example/",
+		"/templates/", "templates/",
+		"/template/", "template/",
+		"/tests/", "tests/",
+		"/test/", "test/",
+		"/.claude/", ".claude/",
+		"/node_modules/",
+		"/vendor/",
+	}
+	for _, n := range noisy {
+		if strings.Contains(lower, n) {
+			return true
+		}
+	}
+	return false
+}
+
 // extractSkillName derives a skill name from the SKILL.md file path.
 // e.g., "skills/data-analysis/SKILL.md" → "data-analysis"
 func extractSkillName(filePath string) string {
@@ -442,4 +517,52 @@ func extractSkillName(filePath string) string {
 		return "imported-skill"
 	}
 	return path.Base(dir)
+}
+
+// inferSkillFromRaw builds a best-effort Skill when SKILL.md has no valid frontmatter.
+func inferSkillFromRaw(repoName string, content []byte) *skill.Skill {
+	body := string(content)
+	name := sanitizeSkillName(repoName)
+	if name == "" {
+		name = "imported-skill"
+	}
+	desc := firstNonEmptyLine(body)
+	if len(desc) > 240 {
+		desc = desc[:237] + "..."
+	}
+	if desc == "" {
+		desc = "Imported from GitHub; manifest not found."
+	}
+	return &skill.Skill{
+		Name:         name,
+		Version:      "0.0.0",
+		Description:  desc,
+		Lang:         "",
+		Mode:         "cognitive",
+		Instructions: body,
+	}
+}
+
+var skillNameSanitizeRe = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+func sanitizeSkillName(s string) string {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	cleaned := skillNameSanitizeRe.ReplaceAllString(lower, "-")
+	cleaned = strings.Trim(cleaned, "-")
+	if len(cleaned) > 64 {
+		cleaned = cleaned[:64]
+	}
+	return cleaned
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(line)
+		t = strings.TrimLeft(t, "#> ")
+		t = strings.TrimSpace(t)
+		if t != "" {
+			return t
+		}
+	}
+	return ""
 }
