@@ -72,13 +72,14 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 		status = statusFilter[0]
 	}
 	rows, err := s.conn().QueryContext(ctx, `
-		SELECT s.tenant_id, s.name, s.version, s.description, s.lang, s.status, s.stars,
+		SELECT DISTINCT ON (s.name)
+		       s.tenant_id, s.name, s.version, s.description, s.lang, s.status, s.stars,
 		       s.scan_result, s.scanned_at, s.reviewed_by, s.reviewed_at, s.uploaded_at, s.source_url,
 		       b.name IS NOT NULL AS blocked
 		FROM sandbox.skills s
 		LEFT JOIN sandbox.tenant_blocked_skills b ON b.tenant_id = s.tenant_id AND b.name = s.name
 		WHERE s.tenant_id = $1 AND s.status = $2
-		ORDER BY s.name, s.version
+		ORDER BY s.name, s.uploaded_at DESC
 	`, tenantID, status)
 	if err != nil {
 		return nil, fmt.Errorf("list skills: %w", err)
@@ -110,13 +111,14 @@ func (s *Store) ListSkills(ctx context.Context, tenantID string, statusFilter ..
 // ListAllSkills returns every skill for a tenant regardless of status.
 func (s *Store) ListAllSkills(ctx context.Context, tenantID string) ([]SkillRecord, error) {
 	rows, err := s.conn().QueryContext(ctx, `
-		SELECT s.tenant_id, s.name, s.version, s.description, s.lang, s.status, s.stars,
+		SELECT DISTINCT ON (s.name)
+		       s.tenant_id, s.name, s.version, s.description, s.lang, s.status, s.stars,
 		       s.scan_result, s.scanned_at, s.reviewed_by, s.reviewed_at, s.uploaded_at, s.source_url,
 		       b.name IS NOT NULL AS blocked
 		FROM sandbox.skills s
 		LEFT JOIN sandbox.tenant_blocked_skills b ON b.tenant_id = s.tenant_id AND b.name = s.name
 		WHERE s.tenant_id = $1
-		ORDER BY s.name, s.version
+		ORDER BY s.name, s.uploaded_at DESC
 	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list all skills: %w", err)
