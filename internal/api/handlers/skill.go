@@ -114,7 +114,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 		if existing, _ := s.ListAllSkills(c.Request.Context(), tenantID); existing != nil {
 			for _, e := range existing {
 				if e.Name == parsedSkill.Name && e.Status != store.SkillStatusDeclined {
-					response.RespondError(c, http.StatusConflict, "skill_exists", "Skill "+parsedSkill.Name+" is already in your skills (status: "+e.Status+").")
+					response.RespondError(c, http.StatusConflict, "skill_exists", "Skill "+parsedSkill.Name+" is already in your skills.")
 					return
 				}
 			}

@@ -296,7 +296,7 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 	if existing, err := m.store.ListAllSkills(ctx, tenantID); err == nil {
 		for _, s := range existing {
 			if s.Name == candidateName && s.Status != store.SkillStatusDeclined {
-				return nil, fmt.Errorf("skill_exists: %q is already in your skills (status: %s)", candidateName, s.Status)
+				return nil, fmt.Errorf("skill_exists: %q is already in your skills", candidateName)
 			}
 		}
 	}

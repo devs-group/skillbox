@@ -477,6 +477,46 @@ func (c *Client) ListSkills(ctx context.Context, statusFilter ...string) ([]Skil
 	return skills, nil
 }
 
+type ScannerConfig struct {
+	ApprovalPolicy string `json:"approval_policy"`
+}
+
+// GetScannerConfig returns the tenant's scanner configuration. Requires admin credentials.
+func (c *Client) GetScannerConfig(ctx context.Context) (*ScannerConfig, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/admin/scanner/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("skillbox get scanner config: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	var cfg ScannerConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("decode scanner config: %w", err)
+	}
+	return &cfg, nil
+}
+
+// UpdateScannerConfig sets the tenant's approval policy. Requires admin credentials.
+func (c *Client) UpdateScannerConfig(ctx context.Context, cfg ScannerConfig) error {
+	body, err := json.Marshal(map[string]string{"approval_policy": cfg.ApprovalPolicy})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, "/v1/admin/scanner/config", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("skillbox update scanner config: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // ReviewSkill approves or declines a skill currently in review status.
 // Action must be "approve" or "decline". Requires admin credentials.
 func (c *Client) ReviewSkill(ctx context.Context, name, version, action, comment string) error {
