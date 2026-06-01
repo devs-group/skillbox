@@ -77,3 +77,10 @@ func starsOf(rs []SearchResult) []int {
 	}
 	return out
 }
+
+func TestInferSkillFromRaw_DefaultsToBaseVersion(t *testing.T) {
+	s := inferSkillFromRaw("docx-to-pdf", []byte("Convert Word documents to PDF."))
+	if s.Version != "1.0.0" {
+		t.Errorf("Version = %q, want 1.0.0 (never 0.0.0)", s.Version)
+	}
+}

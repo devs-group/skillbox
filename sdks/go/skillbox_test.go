@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1338,5 +1339,112 @@ func TestUpsertSkillFromFields_ServerError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for server failure")
+	}
+}
+
+func TestPutSkillFile_Success(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"name":"demo","version":"1.0.1","status":"pending"}`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key")
+	if err := client.PutSkillFile(context.Background(), "demo", "main.py", "print('hi')"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/v1/skills/demo/files" {
+		t.Errorf("path = %q, want /v1/skills/demo/files", gotPath)
+	}
+	if !strings.Contains(gotBody, `"path":"main.py"`) || !strings.Contains(gotBody, `"content":"print('hi')"`) {
+		t.Errorf("body = %q, missing path/content", gotBody)
+	}
+}
+
+func TestPutSkillFile_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not_found","message":"skill not found"}`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key")
+	err := client.PutSkillFile(context.Background(), "demo", "main.py", "x")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("error = %v, want APIError 404", err)
+	}
+}
+
+func TestSetActiveVersion_Success(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"name":"demo","active":"1.0.0"}`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key")
+	if err := client.SetActiveVersion(context.Background(), "demo", "1.0.0"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/v1/skills/demo/active" {
+		t.Errorf("got %s %s, want PUT /v1/skills/demo/active", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"version":"1.0.0"`) {
+		t.Errorf("body = %q, missing version", gotBody)
+	}
+}
+
+func TestSetActiveVersion_Conflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"invalid_status","message":"not available"}`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key")
+	err := client.SetActiveVersion(context.Background(), "demo", "1.0.1")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		t.Errorf("error = %v, want APIError 409", err)
+	}
+}
+
+func TestListSkillVersions_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/skills/demo/versions" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"version":"1.0.1","status":"available","active":true,"uploaded_at":"2026-05-29T00:00:00Z"},{"version":"1.0.0","status":"available","active":false,"uploaded_at":"2026-05-28T00:00:00Z"}]`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key")
+	versions, err := client.ListSkillVersions(context.Background(), "demo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("len = %d, want 2", len(versions))
+	}
+	if versions[0].Version != "1.0.1" || !versions[0].Active {
+		t.Errorf("versions[0] = %+v, want 1.0.1 active", versions[0])
 	}
 }

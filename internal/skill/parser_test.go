@@ -344,8 +344,8 @@ Body text.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s.Version != "0.0.0" {
-		t.Errorf("Version = %q, want %q", s.Version, "0.0.0")
+	if s.Version != DefaultVersion {
+		t.Errorf("Version = %q, want %q", s.Version, DefaultVersion)
 	}
 }
 
@@ -385,5 +385,88 @@ func TestInferLangFromEntrypoint(t *testing.T) {
 				t.Errorf("InferLangFromEntrypoint(%q) = %q, want %q", tt.entrypoint, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNextEditVersion(t *testing.T) {
+	cases := map[string]string{
+		"1.0.2":      "1.0.3",
+		"1.0.0":      "1.0.1",
+		"1.0.0-beta": "1.0.1",
+		"":           "1.0.0",
+		"abc":        "1.0.0",
+		"v1.0.0":     "1.0.0",
+	}
+	for base, want := range cases {
+		t.Run("base_"+base, func(t *testing.T) {
+			if got := NextEditVersion(base); got != want {
+				t.Errorf("NextEditVersion(%q) = %q, want %q", base, got, want)
+			}
+			if err := ValidateVersion(NextEditVersion(base)); err != nil {
+				t.Errorf("NextEditVersion(%q) produced invalid version: %v", base, err)
+			}
+		})
+	}
+}
+
+func TestSetFrontmatterVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		version string
+		want    string
+	}{
+		{
+			name:    "rewrites existing version",
+			content: "---\nname: hello\nversion: 1.0.0\nlang: python\n---\n\nbody\n",
+			version: "1.0.1",
+			want:    "---\nname: hello\nversion: 1.0.1\nlang: python\n---\n\nbody\n",
+		},
+		{
+			name:    "inserts when missing",
+			content: "---\nname: hello\nlang: python\n---\n\nbody\n",
+			version: "1.0.1",
+			want:    "---\nversion: 1.0.1\nname: hello\nlang: python\n---\n\nbody\n",
+		},
+		{
+			name:    "no frontmatter returned unchanged",
+			content: "name: hello\nversion: 1.0.0\n",
+			version: "1.0.1",
+			want:    "name: hello\nversion: 1.0.0\n",
+		},
+		{
+			name:    "unterminated frontmatter returned unchanged",
+			content: "---\nname: hello\nversion: 1.0.0\n",
+			version: "1.0.1",
+			want:    "---\nname: hello\nversion: 1.0.0\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SetFrontmatterVersion(tt.content, tt.version); got != tt.want {
+				t.Errorf("SetFrontmatterVersion()\n got: %q\nwant: %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"1.0.1", "1.0.2", -1},
+		{"1.0.2", "1.0.1", 1},
+		{"1.0.0", "1.0.0", 0},
+		{"1.0.2", "1.0.10", -1}, // numeric, not lexical
+		{"1.2.0", "1.10.0", -1},
+		{"2.0.0", "1.9.9", 1},
+		{"1.0.1-beta", "1.0.1", 0}, // prerelease ignored
+		{"", "1.0.0", -1},
+	}
+	for _, tt := range tests {
+		if got := CompareVersions(tt.a, tt.b); got != tt.want {
+			t.Errorf("CompareVersions(%q,%q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
 	}
 }
