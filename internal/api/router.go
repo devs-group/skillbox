@@ -52,6 +52,12 @@ func NewRouter(cfg *config.Config, s *store.Store, r *runner.Runner, reg *regist
 		v1.GET("/skills/:name/:version", handlers.GetSkill(reg, s))
 		v1.GET("/skills/:name/:version/files", handlers.GetSkillFiles(reg, s))
 		v1.DELETE("/skills/:name/:version", handlers.DeleteSkill(reg, s))
+		v1.DELETE("/skills/:name", handlers.DeleteSkillVersions(reg, s))
+		v1.PUT("/skills/:name/files", handlers.WriteSkillFile(reg, s, cfg, worker))
+		v1.PUT("/skills/:name/files-batch", handlers.WriteSkillFiles(reg, s, cfg, worker))
+		v1.GET("/skills/:name/versions", handlers.ListSkillVersions(s))
+		v1.GET("/skills/:name/diff", handlers.SkillDiff(reg, s))
+		v1.PUT("/skills/:name/active", handlers.SetActiveSkillVersion(s))
 
 		// Scanner admin endpoints — require admin token in addition to API key.
 		admin := v1.Group("/admin")

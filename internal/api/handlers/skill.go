@@ -111,12 +111,18 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 			response.RespondError(c, http.StatusForbidden, "skill_blocked", "Skill "+parsedSkill.Name+" has been blocked by an admin.")
 			return
 		}
-		if existing, _ := s.ListAllSkills(c.Request.Context(), tenantID); existing != nil {
-			for _, e := range existing {
-				if e.Name == parsedSkill.Name && e.Status != store.SkillStatusDeclined {
-					response.RespondError(c, http.StatusConflict, "skill_exists", "Skill "+parsedSkill.Name+" is already in your skills.")
-					return
-				}
+		// Append-only intake: when a non-declined version of this name already
+		// exists, mint the next-free version and scan it instead of rejecting.
+		version, appended, err := s.NextIntakeVersion(c.Request.Context(), tenantID, parsedSkill.Name, parsedSkill.Version)
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to resolve skill version: "+err.Error())
+			return
+		}
+		if appended {
+			zipData, err = skill.RewriteZipVersion(zipData, version)
+			if err != nil {
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to repackage skill: "+err.Error())
+				return
 			}
 		}
 
@@ -133,7 +139,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 			slog.Warn("security scan: zip safety check failed",
 				"scan_id", scanID,
 				"skill_name", parsedSkill.Name,
-				"skill_version", parsedSkill.Version,
+				"skill_version", version,
 				"tenant_id", tenantID,
 				"error", err,
 			)
@@ -145,7 +151,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 		}
 
 		// Submit to pending prefix for async scanning.
-		err = reg.Submit(c.Request.Context(), tenantID, parsedSkill.Name, parsedSkill.Version, bytes.NewReader(zipData), int64(len(zipData)))
+		err = reg.Submit(c.Request.Context(), tenantID, parsedSkill.Name, version, bytes.NewReader(zipData), int64(len(zipData)))
 		if err != nil {
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to submit skill: "+err.Error())
 			return
@@ -155,7 +161,7 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 		err = s.UpsertSkill(c.Request.Context(), &store.SkillRecord{
 			TenantID:    tenantID,
 			Name:        parsedSkill.Name,
-			Version:     parsedSkill.Version,
+			Version:     version,
 			Description: parsedSkill.Description,
 			Lang:        parsedSkill.Lang,
 			Status:      store.SkillStatusPending,
@@ -169,13 +175,13 @@ func UploadSkill(reg *registry.Registry, s *store.Store, cfg *config.Config, sc 
 			worker.Submit(scanner.ScanJob{
 				TenantID: tenantID,
 				Skill:    parsedSkill.Name,
-				Version:  parsedSkill.Version,
+				Version:  version,
 			})
 		}
 
 		c.JSON(http.StatusAccepted, gin.H{
 			"name":        parsedSkill.Name,
-			"version":     parsedSkill.Version,
+			"version":     version,
 			"description": parsedSkill.Description,
 			"lang":        parsedSkill.Lang,
 			"mode":        parsedSkill.Mode,
@@ -647,6 +653,9 @@ func ListSkills(s *store.Store, reg *registry.Registry) gin.HandlerFunc {
 					Mode:        "executable",
 					Status:      rec.Status,
 					Blocked:     rec.Blocked,
+					HasReview:   rec.HasReview,
+					HasDeclined: rec.HasDeclined,
+					HasScanning: rec.HasScanning,
 				}
 				if rec.SourceURL != nil {
 					summaries[i].SourceURL = *rec.SourceURL
@@ -698,9 +707,9 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			return
 		}
 
-		// Resolve "latest" to the most recently uploaded version.
+		// Resolve "latest" to the org's active version (a pending edit must not shadow it).
 		if version == "latest" {
-			resolved, err := s.ResolveLatestVersion(c.Request.Context(), tenantID, name)
+			resolved, err := s.ResolveActiveVersion(c.Request.Context(), tenantID, name)
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@latest")
@@ -712,7 +721,7 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			version = resolved
 		}
 
-		rc, err := reg.Download(c.Request.Context(), tenantID, name, version)
+		rc, err := reg.DownloadAny(c.Request.Context(), tenantID, name, version)
 		if err != nil {
 			if errors.Is(err, registry.ErrSkillNotFound) {
 				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@"+version)
@@ -742,7 +751,7 @@ func GetSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, skill.SkillMetadata{
 			Name:         parsed.Name,
-			Version:      parsed.Version,
+			Version:      version,
 			Description:  parsed.Description,
 			Lang:         parsed.Lang,
 			Image:        parsed.Image,
@@ -786,7 +795,7 @@ func GetSkillFiles(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 		}
 
 		if version == "latest" {
-			resolved, err := s.ResolveLatestVersion(c.Request.Context(), tenantID, name)
+			resolved, err := s.ResolveActiveVersion(c.Request.Context(), tenantID, name)
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@latest")
@@ -798,7 +807,7 @@ func GetSkillFiles(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			version = resolved
 		}
 
-		rc, err := reg.Download(c.Request.Context(), tenantID, name, version)
+		rc, err := reg.DownloadAny(c.Request.Context(), tenantID, name, version)
 		if err != nil {
 			if errors.Is(err, registry.ErrSkillNotFound) {
 				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found: "+name+"@"+version)
@@ -912,6 +921,44 @@ func DeleteSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 
 		// Always clean up the DB record.
 		_ = s.DeleteSkill(c.Request.Context(), tenantID, name, version)
+
+		c.Status(http.StatusNoContent)
+	}
+}
+
+// DeleteSkillVersions handles DELETE /v1/skills/:name.
+// It removes every version of a skill from the registry and metadata store,
+// dropping all history, then returns 204 No Content.
+func DeleteSkillVersions(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := middleware.GetTenantID(c)
+		name := c.Param("name")
+
+		if name == "" {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", "skill name is required")
+			return
+		}
+		if err := skill.ValidateName(name); err != nil {
+			response.RespondError(c, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+
+		versions, err := s.ListSkillVersions(c.Request.Context(), tenantID, name)
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to list skill versions: "+err.Error())
+			return
+		}
+
+		// Best-effort removal of every version's archive from S3.
+		for _, v := range versions {
+			if err := reg.Delete(c.Request.Context(), tenantID, name, v.Version); err != nil && !errors.Is(err, registry.ErrSkillNotFound) {
+				response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to delete skill archive: "+err.Error())
+				return
+			}
+		}
+
+		// Always clean up the DB records, even when no archives remained.
+		_ = s.DeleteSkillAllVersions(c.Request.Context(), tenantID, name)
 
 		c.Status(http.StatusNoContent)
 	}

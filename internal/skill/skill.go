@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,7 +80,7 @@ func ParseSkillMD(data []byte) (*Skill, error) {
 
 	version := f.Version
 	if version == "" {
-		version = "0.0.0"
+		version = DefaultVersion
 	}
 
 	mode := f.Mode
@@ -167,6 +168,9 @@ type SkillSummary struct {
 	Status      string `json:"status,omitempty"`
 	SourceURL   string `json:"source_url,omitempty"`
 	Blocked     bool   `json:"blocked,omitempty"`
+	HasReview   bool   `json:"has_review,omitempty"`
+	HasDeclined bool   `json:"has_declined,omitempty"`
+	HasScanning bool   `json:"has_scanning,omitempty"`
 }
 
 // ValidateName checks that a skill name contains only safe characters.
@@ -190,6 +194,58 @@ func ValidateVersion(version string) error {
 		return fmt.Errorf("version %q must be semver (MAJOR.MINOR.PATCH)", version)
 	}
 	return nil
+}
+
+// DefaultVersion is the base version assigned when none is provided.
+const DefaultVersion = "1.0.0"
+
+// NextEditVersion derives the version for an edit revision by bumping the
+// PATCH component of the base. An empty or invalid base yields DefaultVersion.
+func NextEditVersion(base string) string {
+	m := versionRe.FindStringSubmatch(base)
+	if m == nil {
+		return DefaultVersion
+	}
+	parts := strings.SplitN(m[0], "-", 2)
+	nums := strings.Split(parts[0], ".")
+	patch, err := strconv.Atoi(nums[2])
+	if err != nil {
+		return DefaultVersion
+	}
+	return fmt.Sprintf("%s.%s.%d", nums[0], nums[1], patch+1)
+}
+
+// CompareVersions compares two MAJOR.MINOR.PATCH versions (prerelease ignored).
+// Returns -1 if a<b, 0 if equal, 1 if a>b. Unparseable parts sort as 0.
+func CompareVersions(a, b string) int {
+	pa := versionNums(a)
+	pb := versionNums(b)
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			if pa[i] < pb[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+func versionNums(v string) [3]int {
+	var out [3]int
+	m := versionRe.FindStringSubmatch(v)
+	if m == nil {
+		return out
+	}
+	core := strings.SplitN(m[0], "-", 2)[0]
+	for i, p := range strings.Split(core, ".") {
+		if i > 2 {
+			break
+		}
+		n, _ := strconv.Atoi(p)
+		out[i] = n
+	}
+	return out
 }
 
 // InferLangFromEntrypoint maps a file extension to a language runtime.

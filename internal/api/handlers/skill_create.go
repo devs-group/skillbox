@@ -63,13 +63,12 @@ func CreateFromFields(reg *registry.Registry, s *store.Store, cfg *config.Config
 			response.RespondError(c, http.StatusForbidden, "skill_blocked", "Skill "+req.Name+" has been blocked by an admin.")
 			return
 		}
-		if existing, _ := s.ListAllSkills(c.Request.Context(), tenantID); existing != nil {
-			for _, e := range existing {
-				if e.Name == req.Name && e.Status != store.SkillStatusDeclined {
-					response.RespondError(c, http.StatusConflict, "skill_exists", "Skill "+req.Name+" is already in your skills.")
-					return
-				}
-			}
+		// Append-only intake: when a non-declined version of this name already
+		// exists, mint the next-free version instead of rejecting.
+		version, _, err := s.NextIntakeVersion(c.Request.Context(), tenantID, req.Name, version)
+		if err != nil {
+			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to resolve skill version: "+err.Error())
+			return
 		}
 
 		skillMD := skill.BuildSkillMD(req.Name, req.Description, lang, version, req.Instructions)

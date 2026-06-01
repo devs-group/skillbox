@@ -15,7 +15,7 @@ DOCKER      := docker
 REGISTRY    ?= ghcr.io/devs-group
 IMAGE       := $(REGISTRY)/$(APP_NAME)
 
-.PHONY: all build build-cli run test test-cover lint fmt vet tidy \
+.PHONY: all build build-cli run test test-cover test-integration test-integration-down lint fmt vet tidy \
         docker-build docker-push dev dev-down clean help \
         helm-lint helm-template helm-test-kind
 
@@ -56,9 +56,19 @@ test-cover:
 	@echo "---"
 	@echo "To view HTML report: go tool cover -html=coverage.out"
 
-## test-integration: Run integration tests (requires Docker)
+## test-integration: Provision a throwaway Postgres and run integration tests (requires Docker)
+SKILLBOX_TEST_DB_DSN ?= postgres://skillbox:skillbox@localhost:5599/skillbox_test?sslmode=disable
 test-integration:
-	$(GO) test -tags=integration -race -count=1 -timeout=5m ./...
+	$(DOCKER) compose -f docker-compose.test.yml up -d --wait postgres-test
+	SKILLBOX_TEST_DB_DSN="$(SKILLBOX_TEST_DB_DSN)" REQUIRE_TEST_DB=true \
+		$(GO) test -tags=integration -race -count=1 -timeout=5m ./...; \
+		status=$$?; \
+		$(DOCKER) compose -f docker-compose.test.yml down -v; \
+		exit $$status
+
+## test-integration-down: Tear down the integration test Postgres
+test-integration-down:
+	$(DOCKER) compose -f docker-compose.test.yml down -v
 
 ## lint: Run golangci-lint
 lint:

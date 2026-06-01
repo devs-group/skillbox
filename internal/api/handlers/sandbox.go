@@ -328,9 +328,9 @@ func (h *SandboxHandler) UploadSkill(c *gin.Context) {
 
 	tenantID := middleware.GetTenantID(c)
 
-	// Resolve "latest" to the actual version from the database.
+	// Resolve "latest" to the org's active version so runs match what the UI shows.
 	if req.Version == "latest" && h.store != nil {
-		resolved, err := h.store.ResolveLatestVersion(c.Request.Context(), tenantID, req.Skill)
+		resolved, err := h.store.ResolveActiveVersion(c.Request.Context(), tenantID, req.Skill)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				response.RespondError(c, http.StatusNotFound, "skill_not_found", "skill not found: "+req.Skill+"@latest")

@@ -346,3 +346,46 @@ func TestPackageSkillZip_FullRoundTrip(t *testing.T) {
 	}
 	t.Fatal("SKILL.md not found in zip")
 }
+
+func TestRewriteZipVersion(t *testing.T) {
+	orig, err := PackageSkillZip("---\nname: rw-skill\nversion: 1.0.0\ndescription: x\n---\nbody", "echo hi", LangBash)
+	if err != nil {
+		t.Fatalf("PackageSkillZip() failed: %v", err)
+	}
+
+	out, err := RewriteZipVersion(orig, "1.0.5")
+	if err != nil {
+		t.Fatalf("RewriteZipVersion() failed: %v", err)
+	}
+
+	r, err := zip.NewReader(bytes.NewReader(out), int64(len(out)))
+	if err != nil {
+		t.Fatalf("zip.NewReader() failed: %v", err)
+	}
+
+	sawEntrypoint := false
+	for _, f := range r.File {
+		rc, _ := f.Open()
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(rc)
+		_ = rc.Close()
+		switch f.Name {
+		case "SKILL.md":
+			parsed, perr := ParseSkillMD(buf.Bytes())
+			if perr != nil {
+				t.Fatalf("ParseSkillMD() failed: %v", perr)
+			}
+			if parsed.Version != "1.0.5" {
+				t.Errorf("Version = %q, want %q", parsed.Version, "1.0.5")
+			}
+		case "run.sh":
+			sawEntrypoint = true
+			if buf.String() != "echo hi" {
+				t.Errorf("entrypoint = %q, want unchanged", buf.String())
+			}
+		}
+	}
+	if !sawEntrypoint {
+		t.Error("entrypoint file missing from rewritten zip")
+	}
+}
