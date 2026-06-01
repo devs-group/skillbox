@@ -12,6 +12,7 @@ import (
 
 	"github.com/devs-group/skillbox/internal/api"
 	"github.com/devs-group/skillbox/internal/artifacts"
+	"github.com/devs-group/skillbox/internal/backfill"
 	"github.com/devs-group/skillbox/internal/config"
 	"github.com/devs-group/skillbox/internal/registry"
 	"github.com/devs-group/skillbox/internal/runner"
@@ -59,6 +60,9 @@ func main() {
 		slog.Error("failed to initialize skill registry", "error", err)
 		os.Exit(1)
 	}
+
+	// Repoint legacy 0.0.0 skills to 1.0.0 and backfill the active-version pointer.
+	backfill.SkillVersions(context.Background(), db, reg, slog.Default())
 
 	// Initialize artifact collector (MinIO)
 	collector, err := artifacts.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3BucketExecs, cfg.S3UseSSL)
