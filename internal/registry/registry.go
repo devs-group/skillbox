@@ -166,6 +166,23 @@ func (r *Registry) Promote(ctx context.Context, tenantID, skillName, version str
 	return nil
 }
 
+// CopyVersion server-side copies a promoted skill archive to a new version. The source is left in place.
+func (r *Registry) CopyVersion(ctx context.Context, tenantID, skillName, from, to string) error {
+	src := objectPath(tenantID, skillName, from)
+	dst := objectPath(tenantID, skillName, to)
+	_, err := r.client.CopyObject(ctx, minio.CopyDestOptions{
+		Bucket: r.bucket,
+		Object: dst,
+	}, minio.CopySrcOptions{
+		Bucket: r.bucket,
+		Object: src,
+	})
+	if err != nil {
+		return fmt.Errorf("copy skill version (%s → %s): %w", src, dst, err)
+	}
+	return nil
+}
+
 // Quarantine deletes a blocked skill's archive from S3; the DB row is retained for display.
 func (r *Registry) Quarantine(ctx context.Context, tenantID, skillName, version string) error {
 	return r.client.RemoveObject(ctx, r.bucket, pendingPath(tenantID, skillName, version), minio.RemoveObjectOptions{})
