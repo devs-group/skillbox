@@ -293,14 +293,6 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 		return nil, fmt.Errorf("skill_blocked: %q has been blocked by an admin", candidateName)
 	}
 
-	if existing, err := m.store.ListAllSkills(ctx, tenantID); err == nil {
-		for _, s := range existing {
-			if s.Name == candidateName && s.Status != store.SkillStatusDeclined {
-				return nil, fmt.Errorf("skill_exists: %q is already in your skills", candidateName)
-			}
-		}
-	}
-
 	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/HEAD/%s",
 		url.PathEscape(req.RepoOwner), url.PathEscape(req.RepoName), skillPath)
 	content, err := m.githubGet(ctx, rawURL)
@@ -325,51 +317,31 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 		dir = ""
 	}
 
-	contentsURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s",
-		url.PathEscape(req.RepoOwner), url.PathEscape(req.RepoName), dir)
-	contentsBody, err := m.githubGet(ctx, contentsURL)
+	// 4. Collect all files in the skill directory, recursing into subdirectories.
+	files, err := m.collectDirFiles(ctx, req.RepoOwner, req.RepoName, dir, dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list skill files: %w", err)
 	}
 
-	var ghFiles []struct {
-		Name        string `json:"name"`
-		Path        string `json:"path"`
-		Size        int    `json:"size"`
-		Type        string `json:"type"`
-		DownloadURL string `json:"download_url"`
-	}
-	if err := json.Unmarshal(contentsBody, &ghFiles); err != nil {
-		return nil, fmt.Errorf("parse contents listing: %w", err)
-	}
-
-	// 4. Build zip archive.
+	// 5. Build zip archive, preserving the relative directory structure.
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 
-	for _, f := range ghFiles {
-		if f.Type != "file" || f.DownloadURL == "" {
-			continue
-		}
-
+	for _, f := range files {
 		fileContent, err := m.githubGet(ctx, f.DownloadURL)
 		if err != nil {
-			slog.Warn("failed to fetch file, skipping", "path", f.Path, "error", err)
+			slog.Warn("failed to fetch file, skipping", "path", f.RelPath, "error", err)
 			continue
 		}
-
-		entryName := f.Name
-		if strings.EqualFold(f.Name, "SKILL.md") {
+		if strings.EqualFold(f.RelPath, "SKILL.md") {
 			fileContent = content
-			entryName = "SKILL.md"
 		}
-
-		w, err := zw.Create(entryName)
+		w, err := zw.Create(f.RelPath)
 		if err != nil {
-			return nil, fmt.Errorf("create zip entry %s: %w", f.Name, err)
+			return nil, fmt.Errorf("create zip entry %s: %w", f.RelPath, err)
 		}
 		if _, err := w.Write(fileContent); err != nil {
-			return nil, fmt.Errorf("write zip entry %s: %w", entryName, err)
+			return nil, fmt.Errorf("write zip entry %s: %w", f.RelPath, err)
 		}
 	}
 
@@ -379,8 +351,21 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 
 	zipBytes := buf.Bytes()
 
+	// Append-only intake: when a non-declined version of this name already
+	// exists, mint the next-free version and scan it instead of rejecting.
+	version, appended, err := m.store.NextIntakeVersion(ctx, tenantID, parsed.Name, parsed.Version)
+	if err != nil {
+		return nil, fmt.Errorf("resolve skill version: %w", err)
+	}
+	if appended {
+		zipBytes, err = skill.RewriteZipVersion(zipBytes, version)
+		if err != nil {
+			return nil, fmt.Errorf("repackage skill: %w", err)
+		}
+	}
+
 	// 5. Submit to pending prefix for async scanning.
-	err = m.reg.Submit(ctx, tenantID, parsed.Name, parsed.Version, bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	err = m.reg.Submit(ctx, tenantID, parsed.Name, version, bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("submit to registry: %w", err)
 	}
@@ -399,7 +384,7 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 	err = m.store.UpsertSkill(ctx, &store.SkillRecord{
 		TenantID:    tenantID,
 		Name:        parsed.Name,
-		Version:     parsed.Version,
+		Version:     version,
 		Description: parsed.Description,
 		Lang:        parsed.Lang,
 		Status:      store.SkillStatusPending,
@@ -412,7 +397,7 @@ func (m *MarketplaceService) Install(ctx context.Context, tenantID string, req *
 
 	return &InstallResponse{
 		Name:        parsed.Name,
-		Version:     parsed.Version,
+		Version:     version,
 		Description: parsed.Description,
 	}, nil
 }
@@ -509,6 +494,61 @@ func isNoisySkillPath(p string) bool {
 	return false
 }
 
+// collectedFile is one file gathered from a skill directory tree.
+type collectedFile struct {
+	RelPath     string
+	DownloadURL string
+}
+
+const (
+	maxSkillFiles = 300
+	maxSkillDepth = 10
+)
+
+// collectDirFiles lists every file under dir recursively, returning paths relative to rootDir.
+func (m *MarketplaceService) collectDirFiles(ctx context.Context, owner, repo, dir, rootDir string, depth int) ([]collectedFile, error) {
+	if depth > maxSkillDepth {
+		return nil, nil
+	}
+	contentsURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s",
+		url.PathEscape(owner), url.PathEscape(repo), dir)
+	body, err := m.githubGet(ctx, contentsURL)
+	if err != nil {
+		return nil, err
+	}
+	var entries []struct {
+		Name        string `json:"name"`
+		Path        string `json:"path"`
+		Type        string `json:"type"`
+		DownloadURL string `json:"download_url"`
+	}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, fmt.Errorf("parse contents listing: %w", err)
+	}
+
+	var out []collectedFile
+	for _, e := range entries {
+		switch e.Type {
+		case "dir":
+			sub, err := m.collectDirFiles(ctx, owner, repo, e.Path, rootDir, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, sub...)
+		case "file":
+			if e.DownloadURL == "" {
+				continue
+			}
+			out = append(out, collectedFile{RelPath: strings.TrimPrefix(e.Path, rootDir+"/"), DownloadURL: e.DownloadURL})
+		}
+		if len(out) >= maxSkillFiles {
+			slog.Warn("skill exceeds max file count, truncating", "repo", owner+"/"+repo, "dir", rootDir, "max", maxSkillFiles)
+			return out, nil
+		}
+	}
+	return out, nil
+}
+
 // extractSkillName derives a skill name from the SKILL.md file path.
 // e.g., "skills/data-analysis/SKILL.md" → "data-analysis"
 func extractSkillName(filePath string) string {
@@ -535,7 +575,7 @@ func inferSkillFromRaw(repoName string, content []byte) *skill.Skill {
 	}
 	return &skill.Skill{
 		Name:         name,
-		Version:      "0.0.0",
+		Version:      skill.DefaultVersion,
 		Description:  desc,
 		Lang:         "",
 		Mode:         "cognitive",

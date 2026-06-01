@@ -22,6 +22,12 @@ type APIKey struct {
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrInvalidStatus is returned when an operation is not allowed for a record's current status.
+var ErrInvalidStatus = errors.New("invalid status")
+
+// ErrBlocked is returned when a review action is refused because the skill is blocked.
+var ErrBlocked = errors.New("skill is blocked")
+
 // ValidateKey looks up an API key by its SHA-256 hash. It returns the
 // matching APIKey if the hash exists and the key has not been revoked.
 // A nil APIKey (with nil error) is returned when the key is not found

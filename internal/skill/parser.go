@@ -3,7 +3,51 @@ package skill
 import (
 	"bytes"
 	"fmt"
+	"regexp"
+	"strings"
 )
+
+var frontmatterVersionKeyRe = regexp.MustCompile(`^\s*version\s*:`)
+
+// SetFrontmatterVersion rewrites the version: line in a SKILL.md frontmatter
+// to v, inserting it right after the opening delimiter if absent. Content with
+// no parseable frontmatter is returned unchanged.
+func SetFrontmatterVersion(content, v string) string {
+	lines := strings.Split(content, "\n")
+	open := -1
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) == "---" {
+			open = i
+			break
+		}
+		if strings.TrimSpace(ln) != "" {
+			return content
+		}
+	}
+	if open < 0 {
+		return content
+	}
+	closeI := -1
+	for i := open + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			closeI = i
+			break
+		}
+	}
+	if closeI < 0 {
+		return content
+	}
+	for i := open + 1; i < closeI; i++ {
+		if frontmatterVersionKeyRe.MatchString(lines[i]) {
+			lines[i] = "version: " + v
+			return strings.Join(lines, "\n")
+		}
+	}
+	out := append([]string{}, lines[:open+1]...)
+	out = append(out, "version: "+v)
+	out = append(out, lines[open+1:]...)
+	return strings.Join(out, "\n")
+}
 
 // splitFrontmatter splits a SKILL.md file into the raw YAML frontmatter
 // bytes and the remaining body string. The file must begin with a "---"

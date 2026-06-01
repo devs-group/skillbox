@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -73,6 +74,45 @@ func PackageSkillZip(skillMDContent, code, lang string) ([]byte, error) {
 
 	if err := w.Close(); err != nil {
 		return nil, fmt.Errorf("close zip: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// RewriteZipVersion copies a skill zip, rewriting the SKILL.md frontmatter
+// version to v. Other files are carried over verbatim.
+func RewriteZipVersion(zipBytes []byte, v string) ([]byte, error) {
+	reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for _, f := range reader.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimPrefix(f.Name, "./") == "SKILL.md" {
+			data = []byte(SetFrontmatterVersion(string(data), v))
+		}
+		fw, err := w.Create(f.Name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fw.Write(data); err != nil {
+			return nil, err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
 	}
 	return buf.Bytes(), nil
 }

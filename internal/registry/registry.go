@@ -74,11 +74,6 @@ func pendingPath(tenantID, skillName, version string) string {
 	return path.Join(tenantID, "skills", ".pending", skillName, version, "skill.zip")
 }
 
-// quarantinePath returns the S3 key for a quarantined skill archive.
-func quarantinePath(tenantID, skillName, version string) string {
-	return path.Join(tenantID, "skills", ".quarantine", skillName, version, "skill.zip")
-}
-
 // Upload stores a skill zip archive in the registry after validating that
 // the provided data is a valid zip file (by checking zip headers). The
 // archive is stored at {tenantID}/{skillName}/{version}/skill.zip.
@@ -171,25 +166,29 @@ func (r *Registry) Promote(ctx context.Context, tenantID, skillName, version str
 	return nil
 }
 
-// Quarantine moves a skill from the pending prefix to the quarantine prefix.
-// Called when a skill is blocked by the scanner.
+// Quarantine deletes a blocked skill's archive from S3; the DB row is retained for display.
 func (r *Registry) Quarantine(ctx context.Context, tenantID, skillName, version string) error {
-	src := pendingPath(tenantID, skillName, version)
-	dst := quarantinePath(tenantID, skillName, version)
+	return r.client.RemoveObject(ctx, r.bucket, pendingPath(tenantID, skillName, version), minio.RemoveObjectOptions{})
+}
 
-	_, err := r.client.CopyObject(ctx, minio.CopyDestOptions{
-		Bucket: r.bucket,
-		Object: dst,
-	}, minio.CopySrcOptions{
-		Bucket: r.bucket,
-		Object: src,
-	})
-	if err != nil {
-		return fmt.Errorf("quarantining skill (copy %s → %s): %w", src, dst, err)
+// DeletePending removes a skill archive from the pending prefix; best-effort, missing object is not an error.
+func (r *Registry) DeletePending(ctx context.Context, tenantID, skillName, version string) error {
+	if tenantID == "" || skillName == "" || version == "" {
+		return fmt.Errorf("tenantID, skillName, and version are required")
 	}
+	return r.client.RemoveObject(ctx, r.bucket, pendingPath(tenantID, skillName, version), minio.RemoveObjectOptions{})
+}
 
-	_ = r.client.RemoveObject(ctx, r.bucket, src, minio.RemoveObjectOptions{})
-	return nil
+// DownloadAny returns a reader from the promoted prefix, falling back to pending (review/quarantined never promote).
+func (r *Registry) DownloadAny(ctx context.Context, tenantID, skillName, version string) (io.ReadCloser, error) {
+	rc, err := r.Download(ctx, tenantID, skillName, version)
+	if err == nil {
+		return rc, nil
+	}
+	if errors.Is(err, ErrSkillNotFound) {
+		return r.DownloadPending(ctx, tenantID, skillName, version)
+	}
+	return nil, err
 }
 
 // DownloadPending returns a reader for a skill in the pending prefix.
@@ -252,23 +251,26 @@ func (r *Registry) Delete(ctx context.Context, tenantID, skillName, version stri
 		return fmt.Errorf("tenantID, skillName, and version are required")
 	}
 
-	key := objectPath(tenantID, skillName, version)
-
-	// Verify the object exists before attempting removal.
-	// MinIO's RemoveObject succeeds silently for non-existent keys.
-	_, err := r.client.StatObject(ctx, r.bucket, key, minio.StatObjectOptions{})
-	if err != nil {
-		errResp := minio.ErrorResponse{}
-		if errors.As(err, &errResp) && errResp.Code == "NoSuchKey" {
-			return ErrSkillNotFound
+	// A version may live in the promoted prefix, the pending prefix, or both — remove both.
+	found := false
+	for _, key := range []string{objectPath(tenantID, skillName, version), pendingPath(tenantID, skillName, version)} {
+		_, err := r.client.StatObject(ctx, r.bucket, key, minio.StatObjectOptions{})
+		if err != nil {
+			errResp := minio.ErrorResponse{}
+			if errors.As(err, &errResp) && errResp.Code == "NoSuchKey" {
+				continue
+			}
+			return fmt.Errorf("checking skill archive %q: %w", key, err)
 		}
-		return fmt.Errorf("checking skill archive %q: %w", key, err)
+		if err := r.client.RemoveObject(ctx, r.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+			return fmt.Errorf("deleting skill archive %q: %w", key, err)
+		}
+		found = true
 	}
 
-	if err := r.client.RemoveObject(ctx, r.bucket, key, minio.RemoveObjectOptions{}); err != nil {
-		return fmt.Errorf("deleting skill archive %q: %w", key, err)
+	if !found {
+		return ErrSkillNotFound
 	}
-
 	return nil
 }
 

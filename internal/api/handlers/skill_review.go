@@ -50,6 +50,10 @@ func ReviewSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 				response.RespondError(c, http.StatusNotFound, "not_found", "skill not found or not in review status")
 				return
 			}
+			if err == store.ErrBlocked {
+				response.RespondError(c, http.StatusForbidden, "blocked", "skill is blocked: reopen it first")
+				return
+			}
 			response.RespondError(c, http.StatusInternalServerError, "internal_error", "failed to review skill")
 			return
 		}
@@ -62,7 +66,12 @@ func ReviewSkill(reg *registry.Registry, s *store.Store) gin.HandlerFunc {
 			if err := reg.Promote(c.Request.Context(), tenantID, name, version); err != nil {
 				_ = c.Error(err)
 			}
+			// Advance active pointer to the approved version, mirroring scanner auto-promote.
+			if err := s.SetActiveVersion(c.Request.Context(), tenantID, name, version); err != nil {
+				_ = c.Error(err)
+			}
 		}
+
 
 		c.JSON(http.StatusOK, gin.H{
 			"name":    name,

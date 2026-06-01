@@ -42,6 +42,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // --------------------------------------------------------------------
@@ -131,6 +132,9 @@ type Skill struct {
 	Status      string `json:"status,omitempty"`
 	SourceURL   string `json:"source_url,omitempty"`
 	Blocked     bool   `json:"blocked,omitempty"`
+	HasReview   bool   `json:"has_review,omitempty"`
+	HasDeclined bool   `json:"has_declined,omitempty"`
+	HasScanning bool   `json:"has_scanning,omitempty"`
 }
 
 // SkillDetail is the full skill definition returned by GetSkill, including
@@ -590,10 +594,170 @@ func (c *Client) GetSkillFile(ctx context.Context, name, version, filePath strin
 	return &files[0], nil
 }
 
+// SkillVersionInfo is a lightweight view of one stored skill version.
+type SkillVersionInfo struct {
+	Version      string            `json:"version"`
+	Status       string            `json:"status"`
+	Active       bool              `json:"active"`
+	Blocked      bool              `json:"blocked"`
+	UploadedAt   time.Time         `json:"uploaded_at"`
+	ScanSummary  string            `json:"scan_summary,omitempty"`
+	ScanFindings []ScanFindingInfo `json:"scan_findings,omitempty"`
+}
+
+// ScanFindingInfo is the reviewer-facing subset of a security scan finding.
+type ScanFindingInfo struct {
+	Severity    string `json:"severity"`
+	Category    string `json:"category"`
+	FilePath    string `json:"file_path,omitempty"`
+	Line        int    `json:"line,omitempty"`
+	Description string `json:"description"`
+	Remediation string `json:"remediation,omitempty"`
+}
+
+// PutSkillFile replaces or adds a single file in the skill's active version.
+// The edit creates a new derived version that the server scans before it can
+// become active. The server responds with 202 Accepted.
+func (c *Client) PutSkillFile(ctx context.Context, name, path, content string) error {
+	body, err := json.Marshal(map[string]string{"path": path, "content": content})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, "/v1/skills/"+name+"/files", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// SkillFileWrite is one file in a full-tree batch write.
+type SkillFileWrite struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// PutSkillFiles replaces the skill's whole file tree with the given snapshot in
+// one new derived version. SKILL.md must be present. The server scans the new
+// version before it can become active and responds with 202 Accepted.
+func (c *Client) PutSkillFiles(ctx context.Context, name string, files []SkillFileWrite) error {
+	body, err := json.Marshal(map[string]any{"files": files})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, "/v1/skills/"+name+"/files-batch", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// DiffLine is one line in a file diff: Op is " " (context), "+" (added), "-" (removed).
+type DiffLine struct {
+	Op   string `json:"op"`
+	Text string `json:"text"`
+}
+
+// FileDiff describes how one file changed between two versions.
+type FileDiff struct {
+	Path   string     `json:"path"`
+	Status string     `json:"status"`
+	Lines  []DiffLine `json:"lines,omitempty"`
+}
+
+// SkillDiffResult is the per-file diff between two skill versions.
+type SkillDiffResult struct {
+	Name  string     `json:"name"`
+	From  string     `json:"from"`
+	To    string     `json:"to"`
+	Files []FileDiff `json:"files"`
+}
+
+// SkillDiff returns the per-file line diff between two versions. from may be empty
+// (defaults server-side to the active version).
+func (c *Client) SkillDiff(ctx context.Context, name, from, to string) (*SkillDiffResult, error) {
+	path := "/v1/skills/" + name + "/diff?to=" + url.QueryEscape(to)
+	if from != "" {
+		path += "&from=" + url.QueryEscape(from)
+	}
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, c.parseAPIError(resp)
+	}
+	var out SkillDiffResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetActiveVersion switches the tenant's active version for a skill. The target
+// must be an existing available version.
+func (c *Client) SetActiveVersion(ctx context.Context, name, version string) error {
+	body, err := json.Marshal(map[string]string{"version": version})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, "/v1/skills/"+name+"/active", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// ListSkillVersions returns every stored version of a skill with its status
+// and active flag.
+func (c *Client) ListSkillVersions(ctx context.Context, name string) ([]SkillVersionInfo, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/v1/skills/"+name+"/versions", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var versions []SkillVersionInfo
+	if err := c.decodeResponse(resp, &versions); err != nil {
+		return nil, err
+	}
+	return versions, nil
+}
+
 // DeleteSkill removes a specific skill version. The server responds with
 // 204 No Content on success.
 func (c *Client) DeleteSkill(ctx context.Context, name, version string) error {
 	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/skills/"+name+"/"+version, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.parseAPIError(resp)
+	}
+	return nil
+}
+
+// DeleteSkillAllVersions removes every version of a skill, dropping all
+// history. The server responds with 204 No Content on success.
+func (c *Client) DeleteSkillAllVersions(ctx context.Context, name string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, "/v1/skills/"+name, nil)
 	if err != nil {
 		return err
 	}

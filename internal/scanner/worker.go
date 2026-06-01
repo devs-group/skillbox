@@ -53,6 +53,7 @@ type Worker struct {
 	updateStatus    func(ctx context.Context, tenantID, name, version, status string, result json.RawMessage) error
 	listPending     func(ctx context.Context) ([]ScanJob, error)
 	getApprovalPolicy func(ctx context.Context, tenantID string) (string, error)
+	onAvailable     func(ctx context.Context, tenantID, name, version string) error
 }
 
 // WorkerConfig holds the dependencies for creating a Worker.
@@ -64,6 +65,7 @@ type WorkerConfig struct {
 	UpdateStatus    func(ctx context.Context, tenantID, name, version, status string, result json.RawMessage) error
 	ListPending     func(ctx context.Context) ([]ScanJob, error)
 	GetApprovalPolicy func(ctx context.Context, tenantID string) (string, error)
+	OnAvailable     func(ctx context.Context, tenantID, name, version string) error
 }
 
 // NewWorker creates a scan worker with the given dependencies.
@@ -80,6 +82,7 @@ func NewWorker(cfg WorkerConfig) *Worker {
 		updateStatus:      cfg.UpdateStatus,
 		listPending:       cfg.ListPending,
 		getApprovalPolicy: cfg.GetApprovalPolicy,
+		onAvailable:       cfg.OnAvailable,
 	}
 }
 
@@ -249,6 +252,11 @@ func (w *Worker) evaluateAndTransition(ctx context.Context, job ScanJob, result 
 			return
 		}
 		_ = w.updateStatus(ctx, job.TenantID, job.Skill, job.Version, "available", resultJSON)
+		if w.onAvailable != nil {
+			if err := w.onAvailable(ctx, job.TenantID, job.Skill, job.Version); err != nil {
+				logger.Warn("failed to advance active version after scan", "error", err)
+			}
+		}
 	}
 }
 

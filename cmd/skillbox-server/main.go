@@ -139,6 +139,9 @@ func main() {
 				}
 				return cfg.ApprovalPolicy, nil
 			},
+			OnAvailable: func(ctx context.Context, tenantID, name, version string) error {
+				return db.SetActiveVersion(ctx, tenantID, name, version)
+			},
 		})
 		slog.Info("background scan worker initialized")
 	}
